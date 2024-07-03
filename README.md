@@ -23,7 +23,7 @@
 ## Usage
 
 1. Download the script:
-```git clone```
+```git clone https://github.com/Darkcast/letsGO.git```
 
 2. Make the script executable:
 ```chmod +x letsGo.sh```
