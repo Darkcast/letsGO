@@ -51,11 +51,6 @@ If you encounter any issues:
 - Verify that you have sudo privileges
 - Check system logs for any error messages
 
-## Contributing
-
-Feel free to fork this repository and submit pull requests for any improvements or bug fixes.
-
-
 ## Disclaimer
 This script has only been tested on Ubuntu 24.04 LTS, it should work on other linux distros.
 
