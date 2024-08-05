@@ -101,7 +101,10 @@ if [ "$current_version" != "$GO_VERSION" ]; then
 
     # Add Go to the PATH environment variable for the current user
     if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' "$HOME_DIR/.profile"; then
-        echo "export PATH=\$PATH:/usr/local/go/bin" >> "$HOME_DIR/.profile"
+        echo "# golang setup" >> "$HOME_DIR/.profile"
+        echo "export GOROOT=/usr/local/go" >> "$HOME_DIR/.profile"
+        echo "export GOPATH=\$HOME/go" >> "$HOME_DIR/.profile"
+        echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH" >> "$HOME_DIR/.profile"
         echo -e "${green}[✓] Added Go to PATH in .profile${reset}"
     else
         echo -e "${green}[✓] Go is already in the PATH in .profile ${reset}"
