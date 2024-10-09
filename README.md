@@ -5,14 +5,17 @@
 
 ## Description
 
+The most simplest/easiest way to install Golang on linux distros.
+
 `letsGo.sh` is a Bash script designed to automate the installation and updating of Go (Golang) on Linux systems.
 
 ## Features
 
-- Detects the latest version of Go.
+- Detects the latest version of Go lang.
 - Installs Go if not present.
 - Updates Go to the latest version if an older version is installed
 - Adds Go to the system PATH.
+- It createst the Go directory in the users home folder
 
 ## Prerequisites
 
