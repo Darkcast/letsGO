@@ -2,7 +2,7 @@
 
 # This script checks for the presence of jq and curl utilities, prints an ASCII art banner if provided,
 # checks if the latest version of Go (Golang) is installed, and if not, downloads and installs it.
-# Version 0.05 codename: fiver
+# Version 0.07 codename: cross-platform
 
 # ANSI Colors
 red='\033[1;31m'
@@ -23,27 +23,66 @@ print_ascii_art() {
     fi
 }
 
+# Detect operating system
+detect_os() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "linux"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macos"
+    else
+        echo "unsupported"
+    fi
+}
 
-# Check for sudo privileges
-if ! sudo -v &> /dev/null; then
-    echo -e "${red}[✗] This script requires sudo privileges. Please run as 'sudo ./letsGO.sh' ${reset}"
+# Get the current OS
+OS=$(detect_os)
+
+if [ "$OS" = "unsupported" ]; then
+    echo -e "${red}[✗] Unsupported operating system: $OSTYPE ${reset}"
     exit 1
 fi
+
+echo -e "${blue}[i] Detected OS: $OS ${reset}"
+
+# Check for sudo privileges (only for Linux or if not using Homebrew on macOS)
+check_sudo() {
+    if [ "$OS" = "linux" ] || ([ "$OS" = "macos" ] && ! command -v brew &> /dev/null); then
+        if ! sudo -v &> /dev/null; then
+            echo -e "${red}[✗] This script requires sudo privileges. Please run as 'sudo ./letsGO.sh' ${reset}"
+            exit 1
+        fi
+    fi
+}
 
 # Function to check for package managers
 install_package() {
     package=$1
-    if command -v apt-get &> /dev/null; then
-        sudo apt-get install -y "$package" > /dev/null 2>&1
-    elif command -v yum &> /dev/null; then
-        sudo yum install -y "$package" > /dev/null 2>&1
-    elif command -v dnf &> /dev/null; then
-        sudo dnf install -y "$package" > /dev/null 2>&1
-    else
-        echo -e "${red}[✗] Package manager not found. Please install $package manually.${reset}"
-        exit 1
+    
+    if [ "$OS" = "linux" ]; then
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get install -y "$package" > /dev/null 2>&1
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y "$package" > /dev/null 2>&1
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y "$package" > /dev/null 2>&1
+        else
+            echo -e "${red}[✗] Package manager not found. Please install $package manually.${reset}"
+            exit 1
+        fi
+    elif [ "$OS" = "macos" ]; then
+        if command -v brew &> /dev/null; then
+            brew install "$package" > /dev/null 2>&1
+        elif command -v port &> /dev/null; then
+            sudo port install "$package" > /dev/null 2>&1
+        else
+            echo -e "${red}[✗] Package manager not found. Please install Homebrew or MacPorts, or install $package manually.${reset}"
+            exit 1
+        fi
     fi
 }
+
+# Check sudo privileges
+check_sudo
 
 # Print ASCII banner
 print_ascii_art "$encoded_art"
@@ -82,35 +121,77 @@ fi
 
 # If Go is not installed or needs updating, proceed with installation
 if [ "$current_version" != "$GO_VERSION" ]; then
-    echo -e "${green}[✓] Downloading and installing Go-lang version: $GO_VERSION ${reset}"
-    if ! wget -q https://go.dev/dl/"${GO_VERSION}".linux-amd64.tar.gz; then
+    
+    # Set architecture and download URL based on OS
+    if [ "$OS" = "linux" ]; then
+        ARCH="linux-amd64"
+        SYMLINK_PATH="/usr/bin/go"
+        PROFILE_FILE="$HOME_DIR/.profile"
+    elif [ "$OS" = "macos" ]; then
+        # Detect Mac architecture (Intel vs Apple Silicon)
+        if [[ $(uname -m) == "arm64" ]]; then
+            ARCH="darwin-arm64"
+        else
+            ARCH="darwin-amd64"
+        fi
+        SYMLINK_PATH="/usr/local/bin/go"
+        # Use .zshrc for macOS (default shell since Catalina) or .bash_profile
+        if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "/bin/zsh" ]; then
+            PROFILE_FILE="$HOME_DIR/.zshrc"
+        else
+            PROFILE_FILE="$HOME_DIR/.bash_profile"
+        fi
+    fi
+    
+    echo -e "${green}[✓] Downloading and installing Go-lang version: $GO_VERSION for $ARCH ${reset}"
+    
+    # Download Go
+    if ! wget -q https://go.dev/dl/"${GO_VERSION}"."${ARCH}".tar.gz; then
         echo -e "${red}[✗] Failed to download Go-lang version: $GO_VERSION ${reset}"
         exit 1
     fi
-    if ! sudo tar -C /usr/local -xzf "${GO_VERSION}".linux-amd64.tar.gz > /dev/null 2>&1; then
+    
+    # Extract Go
+    if ! sudo tar -C /usr/local -xzf "${GO_VERSION}"."${ARCH}".tar.gz > /dev/null 2>&1; then
         echo -e "${red}[✗] Failed to extract Go-lang version: $GO_VERSION ${reset}"
-        rm "${GO_VERSION}".linux-amd64.tar.gz
+        rm "${GO_VERSION}"."${ARCH}".tar.gz
         exit 1
     fi
-    if ! sudo ln -sf /usr/local/go/bin/go /usr/bin/go; then
-        echo -e "${red}[✗] Failed to create symbolic link for Go ${reset}"
-        exit 1
+    
+    # Create symbolic link
+    if ! sudo ln -sf /usr/local/go/bin/go "$SYMLINK_PATH"; then
+        echo -e "${yellow}[!] Failed to create symbolic link for Go in $SYMLINK_PATH. Go is still installed in /usr/local/go/bin/ ${reset}"
+    else
+        echo -e "${green}[✓] Created symbolic link for Go in $SYMLINK_PATH ${reset}"
     fi
-    rm "${GO_VERSION}".linux-amd64.tar.gz
+    
+    # Clean up
+    rm "${GO_VERSION}"."${ARCH}".tar.gz
     echo -e "${green}[✓] Go-lang successfully installed. ${reset}"
 
     # Add Go to the PATH environment variable for the current user
-    if ! grep -q 'export PATH=$PATH:/usr/local/go/bin' "$HOME_DIR/.profile"; then
-        echo "# golang setup" >> "$HOME_DIR/.profile"
-        echo "export GOROOT=/usr/local/go" >> "$HOME_DIR/.profile"
-        echo "export GOPATH=\$HOME/go" >> "$HOME_DIR/.profile"
-        echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH" >> "$HOME_DIR/.profile"
-        echo -e "${green}[✓] Added Go to PATH in .profile${reset}"
+    if ! grep -q "# golang setup" "$PROFILE_FILE" 2>/dev/null; then
+        echo "# golang setup" >> "$PROFILE_FILE"
+        echo "export GOROOT=/usr/local/go" >> "$PROFILE_FILE"
+        echo "export GOPATH=\$HOME/go" >> "$PROFILE_FILE"
+        echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH" >> "$PROFILE_FILE"
+        echo -e "${green}[✓] Added Go to PATH in $(basename "$PROFILE_FILE")${reset}"
     else
-        echo -e "${green}[✓] Go is already in the PATH in .profile ${reset}"
+        echo -e "${green}[✓] Go is already in the PATH in $(basename "$PROFILE_FILE") ${reset}"
     fi
 else
     echo -e "${green}[✓] Go is already installed and up-to-date. ${reset}"
 fi
 
-echo -e "${yellow}[!] Please run 'source ~/.profile' or log out and back in to update your PATH.${reset}"
+# Final instructions based on OS
+if [ "$OS" = "linux" ]; then
+    echo -e "${yellow}[!] Please run 'source ~/.profile' or log out and back in to update your PATH.${reset}"
+elif [ "$OS" = "macos" ]; then
+    if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "/bin/zsh" ]; then
+        echo -e "${yellow}[!] Please run 'source ~/.zshrc' or restart your terminal to update your PATH.${reset}"
+    else
+        echo -e "${yellow}[!] Please run 'source ~/.bash_profile' or restart your terminal to update your PATH.${reset}"
+    fi
+fi
+
+echo -e "${green}[✓] Installation complete! Run 'go version' to verify.${reset}"
