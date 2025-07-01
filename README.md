@@ -5,7 +5,7 @@
 
 ## Description
 
-The most simplest/easiest way to install Golang on linux distros.
+The most simplest/easiest way to install Golang on linux and now on MacOs distros.
 
 `letsGo.sh` is a Bash script designed to automate the installation and updating of Go (Golang) on Linux systems.
 
@@ -56,6 +56,29 @@ If you encounter any issues:
 - Verify that you have sudo privileges.
 - Check system logs for any error messages.
 - Check if your distro can install the required packages (wget, curl, jq) via the package manager.
+
+- If go version doesn't work after installation:
+  
+
+If`go version` doesn't work, check that these lines are in your shell profile `(~/.zshrc` for macOS zsh, `~/.bash_profile` for macOS bash, or `~/.profile` for Linux):
+
+```
+# golang setup
+export GOROOT=/usr/local/go
+export GOPATH=$HOME/go
+export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+
+```
+Then source the file Or simply restart your terminal.
+
+On macOS:
+If using zsh (default): `source ~/.zshrc`
+If using bash: source `~/.bash_profile`
+
+On Linux:
+`source ~/.profile`
+
+
 
 ## Disclaimer
 This script has only been tested on Ubuntu 24.04 LTS, it should work on other linux distros.
