@@ -174,6 +174,7 @@ if [ "$current_version" != "$GO_VERSION" ]; then
         echo "# golang setup" >> "$PROFILE_FILE"
         echo "export GOROOT=/usr/local/go" >> "$PROFILE_FILE"
         echo "export GOPATH=\$HOME/go" >> "$PROFILE_FILE"
+        echo "export GOBIN=\$HOME/go/bin" >> "$PROFILE_FILE"
         echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH" >> "$PROFILE_FILE"
         echo -e "${green}[✓] Added Go to PATH in $(basename "$PROFILE_FILE")${reset}"
     else
