@@ -66,6 +66,7 @@ If`go version` doesn't work, check that these lines are in your shell profile `(
 # golang setup
 export GOROOT=/usr/local/go
 export GOPATH=$HOME/go
+export GOBIN=$HOME/go/bin
 export PATH=$GOROOT/bin:$GOPATH/bin:$PATH
 
 ```
