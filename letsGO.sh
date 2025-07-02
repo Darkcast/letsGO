@@ -2,7 +2,7 @@
 
 # This script checks for the presence of jq and curl utilities, prints an ASCII art banner if provided,
 # checks if the latest version of Go (Golang) is installed, and if not, downloads and installs it.
-# Version 0.07 codename: cross-platform
+# Version 0.08 codename: cross-platform
 
 # ANSI Colors
 red='\033[1;31m'
@@ -248,5 +248,5 @@ elif [ "$OS" = "macos" ]; then
             ;;
     esac
 fi
-
 echo -e "${green}[✓] Installation complete! Run 'go version' to verify.${reset}"
+echo -e "${green}[i] Enjoyed this? Help others discover it by sharing on social media! 💖 ${reset}"
