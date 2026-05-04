@@ -1,8 +1,9 @@
-#!/bin/env bash
+#!/usr/bin/env bash
 
 # This script checks for the presence of jq and curl utilities, prints an ASCII art banner if provided,
 # checks if the latest version of Go (Golang) is installed, and if not, downloads and installs it.
-# Version 0.13 codename: universal-shell-compatible
+# Version 0.14 codename: universal-shell-compatible
+# NOTE: Requires bash. Run as: bash letsGO_Universal.sh
 
 # ANSI Colors
 red='\033[1;31m'
@@ -28,47 +29,26 @@ PROFILE_FILE=""
 GO_VERSION=""
 ARCH=""
 CLEANUP_PERFORMED=false
-
-# Shell capability detection
-SHELL_HAS_ARRAYS=false
-SHELL_HAS_REGEX=false
-
-# Detect shell capabilities
-detect_shell_capabilities() {
-    # Test arrays (suppress all output and errors)
-    if (
-        test_arr=""
-        test_arr="$test_arr item1"
-        test_arr="$test_arr item2"
-        test $test_arr != ""
-    ) >/dev/null 2>&1; then
-        SHELL_HAS_ARRAYS=false  # We'll use string-based approach for maximum compatibility
-    fi
-    
-    # Test regex
-    if [ "$1" = "test" ] 2>/dev/null; then
-        case "$1" in
-            test) SHELL_HAS_REGEX=true ;;
-            *) SHELL_HAS_REGEX=false ;;
-        esac
-    fi
-    
-    if [ "$VERBOSE" = true ]; then
-        echo -e "${cyan}[LOG] Shell compatibility: Arrays=$SHELL_HAS_ARRAYS, Regex=$SHELL_HAS_REGEX${reset}"
-    fi
-}
+TEMP_DIR=""
+GO_CHECKSUM=""
+GO_API_RESPONSE=""
 
 # Enhanced cleanup function - centralized and robust
 cleanup() {
     if [ "$CLEANUP_PERFORMED" = true ]; then
         return 0
     fi
-    
+
     if [ -n "$DOWNLOAD_FILE" ] && [ -f "$DOWNLOAD_FILE" ]; then
         log_message "Cleaning up downloaded file: $DOWNLOAD_FILE"
         rm -f "$DOWNLOAD_FILE" 2>/dev/null || true
     fi
-    
+
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        log_message "Cleaning up temp directory: $TEMP_DIR"
+        rm -rf "$TEMP_DIR" 2>/dev/null || true
+    fi
+
     CLEANUP_PERFORMED=true
 }
 
@@ -94,24 +74,32 @@ parse_arguments() {
                 MODE="diagnose"
                 shift
                 ;;
+            --setup)
+                MODE="setup"
+                shift
+                ;;
             --verbose|-v)
                 VERBOSE=true
                 shift
                 ;;
             --log)
+                case "${2:-}" in
+                    ''|--*)
+                        echo -e "${red}[✗] option    :: --log requires a file path (e.g., --log /tmp/install.log)${reset}"
+                        safe_exit 1
+                        ;;
+                esac
                 LOG_FILE="$2"
-                if [ -z "$LOG_FILE" ]; then
-                    echo -e "${red}[✗] --log requires a file path${reset}"
-                    safe_exit 1
-                fi
                 shift 2
                 ;;
             --version)
+                case "${2:-}" in
+                    ''|--*)
+                        echo -e "${red}[✗] option    :: --version requires a version number (e.g., --version 1.21.0)${reset}"
+                        safe_exit 1
+                        ;;
+                esac
                 SPECIFIC_VERSION="$2"
-                if [ -z "$SPECIFIC_VERSION" ]; then
-                    echo -e "${red}[✗] --version requires a version number (e.g., --version 1.21.0)${reset}"
-                    safe_exit 1
-                fi
                 shift 2
                 ;;
             --help|-h)
@@ -119,8 +107,8 @@ parse_arguments() {
                 safe_exit 0
                 ;;
             *)
-                echo -e "${red}[✗] Unknown option: $1${reset}"
-                echo "Use --help for usage information"
+                echo -e "${red}[✗] option    :: unknown: $1${reset}"
+                echo -e "${cyan}[*] hint      :: use --help for usage information${reset}"
                 safe_exit 1
                 ;;
         esac
@@ -130,13 +118,17 @@ parse_arguments() {
 # Help function
 show_help() {
     echo ""
-    echo -e "                    ${blue}letsGO Universal Go Installer${reset}"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    echo -e "${cyan}    letsGO Universal Go Installer${reset}"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo ""
-    echo -e "${blue}---------------------------------  Usage  ---------------------------------${reset}"
+    echo -e "${cyan}// ── USAGE ───────────────────────────────────────────────────${reset}"
     echo ""
-    echo -e "${blue}Usage: $0 [OPTIONS]${reset}"
+    echo -e "  $0 [OPTIONS]"
     echo ""
-    echo -e "${yellow}Options:${reset}"
+    echo -e "${cyan}// ── OPTIONS ─────────────────────────────────────────────────${reset}"
+    echo ""
+    echo "  --setup           Check and install required dependencies, then exit"
     echo "  --uninstall       Completely remove Go installation and clean environment"
     echo "  --diagnose        Check current Go setup health and show system info"
     echo "  --version VERSION Install a specific version of Go (e.g., --version 1.21.0)"
@@ -144,28 +136,30 @@ show_help() {
     echo "  --log FILE        Log installation details to specified file"
     echo "  --help, -h        Show this help message"
     echo ""
-    echo -e "${yellow}Examples:${reset}"
-    echo "  $0                Install or update to latest Go version"
-    echo "  $0 --version 1.20.5    Install Go version 1.20.5"
-    echo "  $0 --uninstall    Remove Go completely"
-    echo "  $0 --diagnose     Check Go installation health"
-    echo "  $0 --verbose      Install with detailed output"
+    echo -e "${cyan}// ── EXAMPLES ────────────────────────────────────────────────${reset}"
     echo ""
-    echo -e "${red}Note: --version flag works only on Linux/MacOS, NOT Android/Termux.${reset} "
+    echo "  $0                        Install or update to latest Go version"
+    echo "  $0 --version 1.20.5       Install Go version 1.20.5"
+    echo "  $0 --uninstall            Remove Go completely"
+    echo "  $0 --diagnose             Check Go installation health"
+    echo "  $0 --verbose              Install with detailed output"
     echo ""
-    echo -e "${blue}---------------------------------  Usage  ---------------------------------${reset}"
+    echo -e "${yellow}[!] note      :: --version flag works only on Linux/MacOS, not Android/Termux${reset}"
+    echo ""
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo ""
 }
 
 # Enhanced logging functions
 log_message() {
     local message="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
     if [ "$VERBOSE" = true ]; then
         echo -e "${cyan}[LOG] $message${reset}"
     fi
-    
+
     if [ -n "$LOG_FILE" ]; then
         echo "[$timestamp] $message" >> "$LOG_FILE" 2>/dev/null || true
     fi
@@ -173,9 +167,10 @@ log_message() {
 
 log_error() {
     local message="$1"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${red}[ERROR] $message${reset}"
-    
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${red}[✗] error     :: $message${reset}" >&2
+
     if [ -n "$LOG_FILE" ]; then
         echo "[$timestamp] ERROR: $message" >> "$LOG_FILE" 2>/dev/null || true
     fi
@@ -187,7 +182,8 @@ detect_os() {
         linux-android*)
             echo "android"
             ;;
-        linux-gnu*)
+        linux-*)
+            # Matches linux-gnu (glibc), linux-musl (Alpine), and other Linux variants
             echo "linux"
             ;;
         darwin*)
@@ -203,7 +199,7 @@ detect_os() {
 detect_user_shell() {
     local target_user="$1"
     local detected_shell=""
-    
+
     # Log to stderr or file only, not stdout to avoid contaminating return value
     if [ "$VERBOSE" = true ]; then
         echo "[LOG] Detecting shell for user: $target_user" >&2
@@ -211,7 +207,7 @@ detect_user_shell() {
     if [ -n "$LOG_FILE" ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') Detecting shell for user: $target_user" >> "$LOG_FILE" 2>/dev/null || true
     fi
-    
+
     # Method 1: Check user's login shell from passwd
     if command -v getent >/dev/null 2>&1; then
         detected_shell=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f7)
@@ -219,7 +215,7 @@ detect_user_shell() {
             echo "[LOG] getent detected shell: $detected_shell" >&2
         fi
     fi
-    
+
     # Method 2: Fallback to environment
     if [ -z "$detected_shell" ]; then
         detected_shell="$SHELL"
@@ -227,7 +223,7 @@ detect_user_shell() {
             echo "[LOG] Using environment SHELL: $detected_shell" >&2
         fi
     fi
-    
+
     # Method 3: Check for common shells by testing files
     if [ -z "$detected_shell" ]; then
         if [ -f "$HOME_DIR/.zshrc" ]; then
@@ -243,7 +239,7 @@ detect_user_shell() {
             echo "[LOG] File-based detection: $detected_shell" >&2
         fi
     fi
-    
+
     # Determine profile file based on shell - OUTPUT ONLY THE PROFILE FILE PATH
     case "$(basename "$detected_shell")" in
         zsh)
@@ -276,13 +272,13 @@ initialize_variables() {
 
     if [ "$OS" = "unsupported" ]; then
         log_error "Unsupported operating system: $OSTYPE"
-        echo -e "${red}[✗] Unsupported operating system: $OSTYPE${reset}"
+        echo -e "${red}[✗] platform  :: unsupported: $OSTYPE${reset}"
         safe_exit 1
     fi
 
     # Set user and directories based on OS
     if [ "$OS" = "android" ]; then
-        REAL_USER="$USER"
+        REAL_USER="${USER:-$(id -un 2>/dev/null)}"
         HOME_DIR="$HOME"
         INSTALL_DIR="$PREFIX"  # Termux uses $PREFIX instead of /usr/local
         BIN_DIR="$PREFIX/bin"
@@ -291,13 +287,23 @@ initialize_variables() {
         # Get home directory safely without eval
         HOME_DIR=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
         if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
-            # Fallback if getent doesn't work
-            HOME_DIR="/home/$SUDO_USER"
+            # Try macOS-specific directory lookup
+            if [ "$OS" = "MacOS" ]; then
+                HOME_DIR=$(dscl . -read "/Users/$SUDO_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+            fi
+        fi
+        if [ -z "$HOME_DIR" ] || [ ! -d "$HOME_DIR" ]; then
+            # Final fallback by OS
+            if [ "$OS" = "MacOS" ]; then
+                HOME_DIR="/Users/$SUDO_USER"
+            else
+                HOME_DIR="/home/$SUDO_USER"
+            fi
         fi
         INSTALL_DIR="/usr/local"
         BIN_DIR="/usr/local/bin"
     else
-        REAL_USER="$USER"
+        REAL_USER="${USER:-$(id -un 2>/dev/null)}"
         HOME_DIR="$HOME"
         INSTALL_DIR="/usr/local"
         BIN_DIR="/usr/local/bin"
@@ -305,7 +311,7 @@ initialize_variables() {
 
     # Detect profile file
     PROFILE_FILE=$(detect_user_shell "$REAL_USER")
-    
+
     log_message "User: $REAL_USER, Home: $HOME_DIR, Install: $INSTALL_DIR"
     log_message "Profile file: $PROFILE_FILE"
 }
@@ -315,11 +321,11 @@ portable_sed() {
     local pattern="$1"
     local file="$2"
     local backup_ext=".bak"
-    
+
     if [ ! -f "$file" ]; then
         return 0
     fi
-    
+
     # Create backup and perform sed operation
     if sed -i"$backup_ext" "$pattern" "$file" 2>/dev/null; then
         # Remove backup file if successful
@@ -338,45 +344,47 @@ portable_sed() {
 deduplicate_path() {
     local new_path="$1"
     local profile_file="$2"
-    
+
     if [ ! -f "$profile_file" ]; then
         return 1
     fi
-    
+
     # Check if PATH addition already exists
     if grep -Fq "$new_path" "$profile_file" 2>/dev/null; then
         log_message "PATH entry already exists in $profile_file"
         return 0  # Already exists
     fi
-    
+
     return 1  # Doesn't exist
 }
 
 # Print banner function
 print_banner() {
-    echo -e "${blue}-----------------------------------------------------------------${reset}"
     echo ""
-    echo -e "${blue}[i] Let'sGO Now with 10% more GO than the leading brand.${reset}"
-    echo -e "${blue}[i] Version 0.13 codename: universal-shell-compatible${reset}"
-    echo -e "${blue}[i] By Darkcast (Android support added, universal compatibility)${reset}"
-    echo -e "${blue}[i] Git https://github.com/Darkcast/letsGO${reset}"
-    echo ""
-    echo -e "${blue}-----------------------------------------------------------------${reset}"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    echo -e "${blue}    ██╗     ███████╗████████╗███████╗ ██████╗  ██████╗${reset}"
+    echo -e "${blue}    ██║     ██╔════╝╚══██╔══╝██╔════╝██╔════╝ ██╔═══██╗${reset}"
+    echo -e "${blue}    ██║     █████╗     ██║   ███████╗██║  ███╗██║   ██║${reset}"
+    echo -e "${blue}    ██║     ██╔══╝     ██║   ╚════██║██║   ██║██║   ██║${reset}"
+    echo -e "${blue}    ███████╗███████╗   ██║   ███████║╚██████╔╝╚██████╔╝${reset}"
+    echo -e "${blue}    ╚══════╝╚══════╝   ╚═╝   ╚══════╝ ╚═════╝  ╚═════╝${reset}"
+    echo -e "${cyan}                                              v0.14 // Darkcast${reset}"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo ""
 }
 
 # Enhanced validation for Go version using portable pattern matching
 validate_go_version() {
     local version="$1"
-    
+
     # Add 'go' prefix if not present
     case "$version" in
         go*) ;;
         *) version="go${version}" ;;
     esac
-    
+
     log_message "Validating Go version: $version"
-    
+
     # Basic format validation using case statement (POSIX compatible)
     case "$version" in
         go1.[0-9]|go1.[0-9][0-9])
@@ -386,12 +394,12 @@ validate_go_version() {
             # Valid: go1.x.x or go1.xx.x or go1.x.xx or go1.xx.xx
             ;;
         *)
-            echo -e "${red}[✗] Invalid Go version format: $version${reset}"
-            echo -e "${cyan}[i] Expected format: 1.21.0 or go1.21.0${reset}"
+            echo -e "${red}[✗] version   :: invalid format: $version${reset}"
+            echo -e "${cyan}[*] hint      :: expected format: 1.21.0 or go1.21.0${reset}"
             safe_exit 1
             ;;
     esac
-    
+
     echo "$version"
 }
 
@@ -400,25 +408,26 @@ check_version_availability() {
     local version="$1"
     local arch="$2"
     local download_url="https://go.dev/dl/${version}.${arch}.tar.gz"
-    
+
     log_message "Checking availability of $version for $arch"
-    echo -e "${blue}[i] Checking if Go version $version is available for $arch...${reset}"
-    
+    echo -e "${cyan}[*] checking  :: $version for $arch${reset}"
+
     # Use HEAD request to check if file exists
     local response_code
     response_code=$(curl -s -o /dev/null -w "%{http_code}" --head "$download_url" 2>/dev/null)
-    
-    # Accept successful responses AND redirects as valid (CDNs commonly use redirects)
+
+    # Accept successful responses AND redirects as valid
+    # go.dev uses CDN redirects for valid download URLs; treating 301/302 as available is intentional
     case "$response_code" in
         200|301|302)
             log_message "Version $version is available for $arch (HTTP $response_code)"
-            echo -e "${green}[✓] Go version $version is available for $arch${reset}"
+            echo -e "${green}[+] version   :: $version  available for $arch${reset}"
             return 0
             ;;
         *)
             log_error "Version $version is not available for $arch (HTTP $response_code)"
-            echo -e "${red}[✗] Go version $version is not available for $arch${reset}"
-            echo -e "${cyan}[i] Check available versions at: https://go.dev/dl/${reset}"
+            echo -e "${red}[✗] version   :: $version  not available for $arch${reset}"
+            echo -e "${cyan}[*] hint      :: check available versions at: https://go.dev/dl/${reset}"
             return 1
             ;;
     esac
@@ -426,14 +435,15 @@ check_version_availability() {
 
 # Check for sudo privileges (not needed for Android/Termux)
 check_sudo() {
-    if [ "$OS" = "linux" ] || ([ "$OS" = "MacOS" ] && ! command -v brew >/dev/null 2>&1); then
+    if [ "$OS" = "linux" ] || [ "$OS" = "MacOS" ]; then
         if ! sudo -v >/dev/null 2>&1; then
-            echo -e "${red}[✗] This script requires sudo privileges. Please run as 'sudo ./letsGO.sh'${reset}"
+            echo -e "${red}[✗] sudo      :: not available${reset}" >&2
+            echo -e "${yellow}[!] action    :: run as: sudo ./$(basename "$0")${reset}" >&2
             safe_exit 1
         fi
     elif [ "$OS" = "android" ]; then
         if [ "$VERBOSE" = true ]; then
-            echo -e "${blue}[i] Running on Android/Termux - no sudo required${reset}"
+            echo -e "${cyan}[*] platform  :: Android/Termux -- no sudo required${reset}"
         fi
     fi
 }
@@ -441,58 +451,68 @@ check_sudo() {
 # Enhanced package installation function
 install_package() {
     local package="$1"
-    
-    echo -e "${yellow}[!] Installing $package...${reset}"
+
+    echo -e "${cyan}[*] install   :: $package via apt-get${reset}"
     log_message "Installing package: $package"
-    
+
     if [ "$OS" = "android" ]; then
         if command -v pkg >/dev/null 2>&1; then
             if pkg install -y "$package" >/dev/null 2>&1; then
                 log_message "Successfully installed $package via pkg"
+                echo -e "${green}[+] install   :: $package done${reset}"
                 return 0
             else
                 log_error "Failed to install $package via pkg"
-                echo -e "${red}[✗] Failed to install $package. Please try manually: pkg install $package${reset}"
+                echo -e "${red}[✗] install   :: $package failed${reset}"
                 safe_exit 1
             fi
         else
-            echo -e "${red}[✗] pkg (Termux package manager) not found. Please install $package manually using 'pkg install $package'.${reset}"
+            echo -e "${red}[✗] pkgmgr    :: none found -- install $package manually${reset}"
             safe_exit 1
         fi
     elif [ "$OS" = "linux" ]; then
-        local package_manager=""
-        local install_cmd=""
-        
         if command -v apt-get >/dev/null 2>&1; then
-            package_manager="apt-get"
-            install_cmd="sudo apt-get update && sudo apt-get install -y $package"
+            log_message "Using apt-get to install $package"
+            if sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$package" >/dev/null 2>&1; then
+                log_message "Successfully installed $package via apt-get"
+                echo -e "${green}[+] install   :: $package done${reset}"
+                return 0
+            fi
         elif command -v yum >/dev/null 2>&1; then
-            package_manager="yum"
-            install_cmd="sudo yum install -y $package"
+            log_message "Using yum to install $package"
+            if sudo yum install -y "$package" >/dev/null 2>&1; then
+                log_message "Successfully installed $package via yum"
+                echo -e "${green}[+] install   :: $package done${reset}"
+                return 0
+            fi
         elif command -v dnf >/dev/null 2>&1; then
-            package_manager="dnf"
-            install_cmd="sudo dnf install -y $package"
+            log_message "Using dnf to install $package"
+            if sudo dnf install -y "$package" >/dev/null 2>&1; then
+                log_message "Successfully installed $package via dnf"
+                echo -e "${green}[+] install   :: $package done${reset}"
+                return 0
+            fi
         elif command -v apk >/dev/null 2>&1; then
-            package_manager="apk"
-            install_cmd="sudo apk add $package"
+            log_message "Using apk to install $package"
+            if sudo apk add "$package" >/dev/null 2>&1; then
+                log_message "Successfully installed $package via apk"
+                echo -e "${green}[+] install   :: $package done${reset}"
+                return 0
+            fi
         else
-            echo -e "${red}[✗] No supported package manager found. Please install $package manually.${reset}"
+            echo -e "${red}[✗] pkgmgr    :: none found -- install $package manually${reset}"
             safe_exit 1
         fi
-        
-        log_message "Using $package_manager to install $package"
-        if eval "$install_cmd" >/dev/null 2>&1; then
-            log_message "Successfully installed $package via $package_manager"
-            return 0
-        else
-            log_error "Failed to install $package via $package_manager"
-            echo -e "${red}[✗] Failed to install $package. Please install it manually.${reset}"
-            safe_exit 1
-        fi
+        log_error "Failed to install $package via package manager"
+        echo -e "${red}[✗] install   :: $package failed${reset}"
+        safe_exit 1
     elif [ "$OS" = "MacOS" ]; then
         if command -v brew >/dev/null 2>&1; then
+            log_message "Using brew to install $package"
+            brew update >/dev/null 2>&1 || true
             if brew install "$package" >/dev/null 2>&1; then
                 log_message "Successfully installed $package via brew"
+                echo -e "${green}[+] install   :: $package done${reset}"
                 return 0
             else
                 log_error "Failed to install $package via brew"
@@ -500,13 +520,16 @@ install_package() {
         elif command -v port >/dev/null 2>&1; then
             if sudo port install "$package" >/dev/null 2>&1; then
                 log_message "Successfully installed $package via port"
+                echo -e "${green}[+] install   :: $package done${reset}"
                 return 0
             else
                 log_error "Failed to install $package via port"
             fi
         fi
-        
-        echo -e "${red}[✗] Package manager not found. Please install Homebrew or MacPorts, or install $package manually.${reset}"
+
+        echo -e "${red}[✗] pkgmgr    :: not found${reset}"
+        echo -e "${yellow}[!] homebrew  :: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${reset}"
+        echo -e "${yellow}[!] then run  :: brew install $package${reset}"
         safe_exit 1
     fi
 }
@@ -514,84 +537,84 @@ install_package() {
 # Enhanced system information collection
 collect_system_info() {
     log_message "Collecting system information"
-    
-    echo -e "${blue}=== System Information ===${reset}"
-    echo -e "${cyan}OS Type:${reset} $OSTYPE"
-    echo -e "${cyan}Detected OS:${reset} $OS"
-    echo -e "${cyan}Architecture:${reset} $(uname -m)"
-    echo -e "${cyan}Kernel:${reset} $(uname -r)"
-    
+
+    echo -e "${cyan}// ── SYSTEM ──────────────────────────────────────────────────${reset}"
+    echo -e "${cyan}[*] ostype    :: $OSTYPE${reset}"
+    echo -e "${cyan}[*] platform  :: $OS${reset}"
+    echo -e "${cyan}[*] arch      :: $(uname -m)${reset}"
+    echo -e "${cyan}[*] kernel    :: $(uname -r)${reset}"
+
     if [ "$OS" = "android" ]; then
-        echo -e "${cyan}Termux Version:${reset} $(getprop ro.build.version.release 2>/dev/null || echo 'Unknown')"
-        echo -e "${cyan}PREFIX:${reset} $PREFIX"
-        
+        echo -e "${cyan}[*] termux    :: $(getprop ro.build.version.release 2>/dev/null || echo 'Unknown')${reset}"
+        echo -e "${cyan}[*] prefix    :: $PREFIX${reset}"
+
         # Android architecture detection
         local android_arch
         android_arch=$(uname -m)
-        echo -e "${cyan}Android Architecture:${reset} $android_arch"
-        
+        echo -e "${cyan}[*] arch      :: $android_arch${reset}"
+
         # Validate architecture support
         case "$android_arch" in
             aarch64|arm64)
-                echo -e "${green}[✓] Architecture supported: ARM64${reset}"
+                echo -e "${green}[+] arch      :: ARM64  supported${reset}"
                 ;;
             armv7l|armv8l)
-                echo -e "${green}[✓] Architecture supported: ARM32${reset}"
+                echo -e "${green}[+] arch      :: ARM32  supported${reset}"
                 ;;
             x86_64)
-                echo -e "${green}[✓] Architecture supported: x86_64${reset}"
+                echo -e "${green}[+] arch      :: x86_64  supported${reset}"
                 ;;
             i686|i386)
-                echo -e "${yellow}[!] Architecture may have limited support: x86_32${reset}"
+                echo -e "${yellow}[!] arch      :: x86_32  limited support${reset}"
                 ;;
             *)
-                echo -e "${yellow}[!] Unknown architecture: $android_arch${reset}"
+                echo -e "${yellow}[!] arch      :: $android_arch  unknown${reset}"
                 ;;
         esac
     fi
-    
-    echo -e "${cyan}User:${reset} $REAL_USER"
-    echo -e "${cyan}Home Directory:${reset} $HOME_DIR"
-    echo -e "${cyan}Current Shell:${reset} $(basename "$SHELL")"
-    echo -e "${cyan}Profile File:${reset} $PROFILE_FILE"
-    
+
+    echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
+    echo -e "${cyan}[*] home      :: $HOME_DIR${reset}"
+    echo -e "${cyan}[*] shell     :: $(basename "$SHELL")${reset}"
+    echo -e "${cyan}[*] profile   :: $PROFILE_FILE${reset}"
+
     if [ "$VERBOSE" = true ]; then
-        echo -e "${cyan}PATH:${reset} $PATH"
+        echo -e "${cyan}[*] PATH      :: $PATH${reset}"
     fi
     echo ""
-    
+
     # Go-specific information
-    echo -e "${blue}=== Go Environment ===${reset}"
+    echo -e "${cyan}// ── GO ENVIRONMENT ──────────────────────────────────────────${reset}"
     if command -v go >/dev/null 2>&1; then
-        echo -e "${cyan}Go Version:${reset} $(go version 2>/dev/null)"
-        echo -e "${cyan}Go Location:${reset} $(which go 2>/dev/null)"
-        echo -e "${cyan}GOROOT:${reset} $(go env GOROOT 2>/dev/null)"
-        echo -e "${cyan}GOPATH:${reset} $(go env GOPATH 2>/dev/null)"
-        echo -e "${cyan}GOOS:${reset} $(go env GOOS 2>/dev/null)"
-        echo -e "${cyan}GOARCH:${reset} $(go env GOARCH 2>/dev/null)"
+        echo -e "${cyan}[*] go        :: $(go version 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] binary    :: $(which go 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] GOROOT    :: $(go env GOROOT 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] GOPATH    :: $(go env GOPATH 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] GOOS      :: $(go env GOOS 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] GOARCH    :: $(go env GOARCH 2>/dev/null)${reset}"
     else
-        echo -e "${yellow}Go is not installed or not in PATH${reset}"
+        echo -e "${yellow}[!] go        :: not installed${reset}"
     fi
     echo ""
 }
 
 # Enhanced diagnostic mode function using string operations
 run_diagnostics() {
-    echo -e "${purple}=== Go Installation Diagnostics ===${reset}"
+    echo -e "${cyan}// ── DIAGNOSE ────────────────────────────────────────────────${reset}"
     echo ""
-    
+
     collect_system_info
-    
+
     # Check for conflicts using string operations
-    echo -e "${blue}=== Potential Issues ===${reset}"
+    echo -e "${cyan}// ── HEALTH ──────────────────────────────────────────────────${reset}"
     local issues_found=false
-    
+
     # Fixed: Only check for actual Go INSTALLATIONS, not GOPATH directories
     local go_locations=""
     local location_count=0
     # Removed $HOME_DIR/go from list since it's GOPATH, not an installation
     local potential_locations="/usr/local/go /usr/bin/go $PREFIX/go $PREFIX/lib/go"
-    
+
     for location in $potential_locations; do
         # Only count directories that contain Go binaries (actual installations)
         if [ -d "$location" ] && [ -f "$location/bin/go" ]; then
@@ -599,34 +622,36 @@ run_diagnostics() {
             location_count=$((location_count + 1))
         fi
     done
-    
+
     if [ $location_count -gt 1 ]; then
-        echo -e "${yellow}[!] Multiple Go installations found:${reset}"
+        echo -e "${yellow}[!] conflicts :: multiple Go installations found:${reset}"
         for loc in $go_locations; do
-            [ -n "$loc" ] && echo -e "    $loc"
+            [ -n "$loc" ] && echo -e "               $loc"
         done
         issues_found=true
     fi
-    
+
     # Check for broken symlinks
     local bin_paths="$PREFIX/bin/go $BIN_DIR/go /usr/local/bin/go"
     for bin_path in $bin_paths; do
         if [ -L "$bin_path" ] && [ ! -e "$bin_path" ]; then
-            echo -e "${yellow}[!] Broken symlink: $bin_path${reset}"
+            echo -e "${yellow}[!] symlink   :: broken: $bin_path${reset}"
             issues_found=true
         fi
     done
-    
+
     # Fixed: Improved GOROOT/binary relationship check
     if command -v go >/dev/null 2>&1; then
-        local go_which=$(which go 2>/dev/null)
-        local go_root=$(go env GOROOT 2>/dev/null)
-        
+        local go_which
+        go_which=$(which go 2>/dev/null)
+        local go_root
+        go_root=$(go env GOROOT 2>/dev/null)
+
         if [ -n "$go_root" ] && [ ! -d "$go_root" ]; then
-            echo -e "${yellow}[!] GOROOT points to non-existent directory: $go_root${reset}"
+            echo -e "${yellow}[!] GOROOT    :: points to non-existent directory: $go_root${reset}"
             issues_found=true
         fi
-        
+
         if [ -n "$go_which" ] && [ -n "$go_root" ]; then
             # Enhanced check: resolve symlinks and check if binary is actually under GOROOT
             local resolved_go_binary=""
@@ -636,7 +661,7 @@ run_diagnostics() {
             else
                 resolved_go_binary="$go_which"
             fi
-            
+
             # Check if the resolved binary path starts with GOROOT
             case "$resolved_go_binary" in
                 "$go_root"*)
@@ -644,54 +669,103 @@ run_diagnostics() {
                     ;;
                 *)
                     # Only flag as mismatch if it's genuinely wrong
-                    echo -e "${yellow}[!] Go binary and GOROOT mismatch:${reset}"
-                    echo -e "    Binary: $go_which"
+                    echo -e "${yellow}[!] mismatch  :: go binary and GOROOT differ${reset}"
+                    echo -e "               binary   $go_which"
                     if [ "$resolved_go_binary" != "$go_which" ]; then
-                        echo -e "    Resolved: $resolved_go_binary"
+                        echo -e "               resolved $resolved_go_binary"
                     fi
-                    echo -e "    GOROOT: $go_root"
+                    echo -e "               GOROOT   $go_root"
                     issues_found=true
                     ;;
             esac
         fi
     fi
-    
+
     # Check profile file issues
     if [ -f "$PROFILE_FILE" ]; then
         local go_path_count
         go_path_count=$(grep -c "GOROOT\|GOPATH" "$PROFILE_FILE" 2>/dev/null || echo "0")
         if [ "$go_path_count" -gt 4 ]; then
-            echo -e "${yellow}[!] Multiple Go environment variable declarations in $PROFILE_FILE${reset}"
+            echo -e "${yellow}[!] profile   :: multiple Go env declarations in $PROFILE_FILE${reset}"
             issues_found=true
         fi
     fi
-    
+
     # Additional helpful checks
     if command -v go >/dev/null 2>&1; then
-        local gopath_dir=$(go env GOPATH 2>/dev/null)
+        local gopath_dir
+        gopath_dir=$(go env GOPATH 2>/dev/null)
         if [ -n "$gopath_dir" ] && [ ! -d "$gopath_dir" ]; then
-            echo -e "${yellow}[!] GOPATH directory does not exist: $gopath_dir${reset}"
-            echo -e "${cyan}[i] Run: mkdir -p $gopath_dir${reset}"
+            echo -e "${yellow}[!] GOPATH    :: directory does not exist: $gopath_dir${reset}"
+            echo -e "${cyan}[*] hint      :: run: mkdir -p $gopath_dir${reset}"
             issues_found=true
         fi
     fi
-    
+
     if [ "$issues_found" = false ]; then
-        echo -e "${green}[✓] No issues detected - Go installation is healthy!${reset}"
+        echo -e "${green}[✓] health    :: no issues detected${reset}"
     fi
-    
+
+    # Version currency check — only runs if online
     echo ""
-    echo -e "${blue}=== Recommendations ===${reset}"
+    echo -e "${cyan}// ── VERSION STATUS ──────────────────────────────────────────${reset}"
     if command -v go >/dev/null 2>&1; then
-        echo -e "${green}[✓] Go is installed and accessible${reset}"
-        echo -e "${cyan}Try: go version${reset}"
-        echo -e "${cyan}Try: go env${reset}"
-        echo -e "${cyan}Try: go env GOPATH && ls \$(go env GOPATH)${reset}"
+        local installed_version
+        installed_version=$(go version 2>/dev/null | awk '{print $3}')
+
+        # Detect connectivity with a lightweight HEAD request (5s timeout)
+        local online=false
+        if curl -s --max-time 5 --head "https://go.dev" >/dev/null 2>&1; then
+            online=true
+        fi
+
+        if [ "$online" = true ]; then
+            # Try jq first, fall back to plain curl
+            local latest_version=""
+            if command -v jq >/dev/null 2>&1; then
+                latest_version=$(curl -s --max-time 10 "https://go.dev/dl/?mode=json" 2>/dev/null \
+                    | jq -r '.[0].version' 2>/dev/null)
+            fi
+            if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
+                latest_version=$(curl -s --max-time 10 https://go.dev/VERSION 2>/dev/null \
+                    | head -1 | tr -d '\r')
+            fi
+
+            if [ -n "$latest_version" ]; then
+                if [ "$installed_version" = "$latest_version" ]; then
+                    echo -e "${green}[+] version   :: $installed_version  up to date${reset}"
+                else
+                    echo -e "${cyan}[*] installed :: $installed_version${reset}"
+                    echo -e "${yellow}[!] latest    :: $latest_version  update available${reset}"
+                    echo -e "${cyan}[*] hint      :: run: $(basename "$0") to upgrade${reset}"
+                fi
+            else
+                echo -e "${cyan}[*] installed :: $installed_version${reset}"
+                echo -e "${yellow}[!] latest    :: could not fetch from go.dev${reset}"
+            fi
+        else
+            # Offline — just show installed version, skip the comparison
+            echo -e "${cyan}[*] installed :: $installed_version${reset}"
+            echo -e "${blue}[*] offline   :: skipping latest version check${reset}"
+        fi
     else
-        echo -e "${yellow}[!] Go is not installed or not in PATH${reset}"
-        echo -e "${cyan}Run: $0 --verbose${reset} to install"
+        echo -e "${yellow}[!] go        :: not installed -- cannot check version status${reset}"
     fi
-    
+
+    echo ""
+    echo -e "${cyan}// ── RECOMMENDATIONS ─────────────────────────────────────────${reset}"
+    if command -v go >/dev/null 2>&1; then
+        echo -e "${green}[✓] health    :: installation healthy${reset}"
+        echo -e "${cyan}[*] try       :: go version${reset}"
+        echo -e "${cyan}[*] try       :: go env${reset}"
+        echo -e "${cyan}[*] try       :: go env GOPATH && ls \$(go env GOPATH)${reset}"
+    else
+        echo -e "${yellow}[!] status    :: Go not installed${reset}"
+        echo -e "${cyan}[*] hint      :: run: sudo ./$(basename "$0")${reset}"
+    fi
+
+    echo ""
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     safe_exit 0
 }
 
@@ -699,24 +773,44 @@ run_diagnostics() {
 create_backup() {
     local backup_dir="$HOME_DIR/.letsgo_backups/$(date +%Y%m%d_%H%M%S)"
     log_message "Creating backup in: $backup_dir"
-    
+
     mkdir -p "$backup_dir" 2>/dev/null || {
         log_error "Failed to create backup directory: $backup_dir"
-        echo -e "${yellow}[!] Warning: Could not create backup directory${reset}"
+        echo -e "${yellow}[!] backup    :: could not create backup directory${reset}"
         return 1
     }
-    
-    # Backup existing Go installation
-    if [ -d "/usr/local/go" ]; then
-        log_message "Backing up /usr/local/go"
-        cp -r "/usr/local/go" "$backup_dir/go_installation" 2>/dev/null || true
+
+    # Estimate backup size and check available space
+    local backup_size_kb=0
+    if [ -d "$INSTALL_DIR/go" ]; then
+        backup_size_kb=$(du -sk "$INSTALL_DIR/go" 2>/dev/null | awk '{print $1}')
     fi
-    
+    if [ "$OS" = "android" ] && [ -d "$PREFIX/lib/go" ]; then
+        backup_size_kb=$(du -sk "$PREFIX/lib/go" 2>/dev/null | awk '{print $1}')
+    fi
+    if [ "${backup_size_kb:-0}" -gt 0 ]; then
+        local avail_kb
+        avail_kb=$(df -k "$HOME_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+        if [ -n "$avail_kb" ] && [ "$avail_kb" -lt "$backup_size_kb" ]; then
+            echo -e "${yellow}[!] disk      :: insufficient space for backup -- skipping${reset}"
+            log_message "Backup skipped: insufficient disk space"
+            return 1
+        fi
+        local avail_mb=$(( avail_kb / 1024 ))
+        echo -e "${cyan}[*] backup    :: creating (~${avail_mb}MB)${reset}"
+    fi
+
+    # Backup existing Go installation
+    if [ -d "$INSTALL_DIR/go" ]; then
+        log_message "Backing up $INSTALL_DIR/go"
+        sudo cp -r "$INSTALL_DIR/go" "$backup_dir/go_installation" 2>/dev/null || true
+    fi
+
     if [ "$OS" = "android" ] && [ -d "$PREFIX/lib/go" ]; then
         log_message "Backing up $PREFIX/lib/go"
         cp -r "$PREFIX/lib/go" "$backup_dir/termux_go" 2>/dev/null || true
     fi
-    
+
     # Backup profile files using string list
     local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile $HOME_DIR/.config/fish/config.fish"
     for profile in $profiles; do
@@ -725,110 +819,106 @@ create_backup() {
             cp "$profile" "$backup_dir/$(basename "$profile").backup" 2>/dev/null || true
         fi
     done
-    
+
     # Save backup location
     echo "$backup_dir" > "$HOME_DIR/.letsgo_last_backup" 2>/dev/null || true
-    echo -e "${green}[✓] Backup created at: $backup_dir${reset}"
+    echo -e "${green}[+] backup    :: $backup_dir  done${reset}"
     return 0
 }
 
 # Enhanced uninstall function
 uninstall_go() {
-    echo -e "${yellow}=== Go Uninstallation ===${reset}"
+    echo -e "${cyan}// ── UNINSTALL ───────────────────────────────────────────────${reset}"
     echo ""
-    
+
     # Collect info before uninstalling
     if command -v go >/dev/null 2>&1; then
-        echo -e "${blue}Current Go installation:${reset}"
-        echo -e "Version: $(go version 2>/dev/null)"
-        echo -e "Location: $(which go 2>/dev/null)"
-        echo -e "GOROOT: $(go env GOROOT 2>/dev/null)"
+        echo -e "${cyan}[*] target    :: $(go env GOROOT 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] version   :: $(go version 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] binary    :: $(which go 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
         echo ""
     fi
-    
+
+    # Ensure sudo is available for system-level operations
+    if [ "$OS" != "android" ]; then
+        check_sudo
+        echo -e "${green}[+] sudo      :: granted${reset}"
+    fi
+
     # Create backup before uninstalling
     create_backup
-    
-    echo -e "${yellow}[!] Starting Go removal...${reset}"
+
     log_message "Starting Go uninstallation"
-    
+
     # Remove Go installations
     if [ "$OS" = "android" ]; then
         # Termux uninstallation
         log_message "Removing Go via pkg"
         if command -v go >/dev/null 2>&1; then
             if pkg uninstall golang -y >/dev/null 2>&1; then
-                echo -e "${green}[✓] Removed Go via pkg${reset}"
+                echo -e "${yellow}[-] remove    :: Go via pkg  done${reset}"
                 log_message "Successfully removed Go via pkg"
             else
-                echo -e "${yellow}[!] Failed to remove via pkg, continuing with manual cleanup${reset}"
+                echo -e "${yellow}[!] remove    :: failed via pkg, continuing with manual cleanup${reset}"
                 log_message "Failed to remove Go via pkg, performing manual cleanup"
             fi
         fi
-        
+
         # Manual cleanup for Termux
         rm -rf "$PREFIX/go" 2>/dev/null
         rm -f "$PREFIX/bin/go" "$PREFIX/bin/gofmt" 2>/dev/null
         log_message "Cleaned up Termux Go files"
-        
+
     else
         # Linux/MacOS uninstallation
-        if [ -d "/usr/local/go" ]; then
-            echo -e "${yellow}[!] Removing /usr/local/go${reset}"
-            if sudo rm -rf "/usr/local/go" 2>/dev/null; then
-                log_message "Removed /usr/local/go"
-                echo -e "${green}[✓] Removed /usr/local/go${reset}"
+        local go_install_path="$INSTALL_DIR/go"
+        if [ -d "$go_install_path" ]; then
+            if sudo rm -rf "$go_install_path" 2>/dev/null; then
+                log_message "Removed $go_install_path"
+                echo -e "${yellow}[-] remove    :: $go_install_path  done${reset}"
             else
-                log_error "Failed to remove /usr/local/go"
-                echo -e "${red}[✗] Failed to remove /usr/local/go${reset}"
+                log_error "Failed to remove $go_install_path"
+                echo -e "${red}[✗] remove    :: $go_install_path  failed${reset}"
             fi
         fi
-        
+
         # Remove symlinks
-        sudo rm -f "/usr/local/bin/go" "/usr/local/bin/gofmt" 2>/dev/null
-        log_message "Removed Go symlinks"
+        sudo rm -f "$BIN_DIR/go" "$BIN_DIR/gofmt" 2>/dev/null
+        echo -e "${yellow}[-] symlinks  :: $BIN_DIR/go  $BIN_DIR/gofmt  removed${reset}"
+        log_message "Removed Go symlinks from $BIN_DIR"
     fi
-    
+
     # Enhanced environment cleanup using string list - FIXED to remove PATH lines
-    echo -e "${yellow}[!] Cleaning up environment variables${reset}"
-    local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile"
-    
+    log_message "Cleaning environment variables"
+    local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile $HOME_DIR/.config/fish/config.fish"
+
     for profile in $profiles; do
         if [ -f "$profile" ]; then
             log_message "Cleaning Go config from $profile"
-            
+
             # Remove Go-related lines using portable sed
             portable_sed '/# golang setup/d' "$profile"
             portable_sed '/export GOROOT/d' "$profile"
             portable_sed '/export GOPATH/d' "$profile"
             portable_sed '/export GOBIN/d' "$profile"
-            
-            # FIX: Remove PATH lines that reference Go variables
+
+            # Remove PATH lines that reference Go variables
             portable_sed '/export PATH.*GOROOT/d' "$profile"
             portable_sed '/export PATH.*GOPATH/d' "$profile"
             portable_sed '/export PATH.*\/go\/bin/d' "$profile"
             portable_sed '/export PATH.*\/usr\/local\/go/d' "$profile"
-            
+
             # Fish shell cleanup
             portable_sed '/set -x GOROOT/d' "$profile"
             portable_sed '/set -x GOPATH/d' "$profile"
             portable_sed '/set -x PATH.*GOROOT/d' "$profile"
             portable_sed '/set -x PATH.*GOPATH/d' "$profile"
             portable_sed '/set -x PATH.*\/go\/bin/d' "$profile"
+            portable_sed '/fish_add_path.*go/d' "$profile"
         fi
     done
-    
-    # Special handling for fish shell
-    if [ -f "$HOME_DIR/.config/fish/config.fish" ]; then
-        log_message "Cleaning Go config from fish shell"
-        portable_sed '/set -x GOROOT/d' "$HOME_DIR/.config/fish/config.fish"
-        portable_sed '/set -x GOPATH/d' "$HOME_DIR/.config/fish/config.fish"
-        portable_sed '/set -x PATH.*GOROOT/d' "$HOME_DIR/.config/fish/config.fish"
-        portable_sed '/set -x PATH.*GOPATH/d' "$HOME_DIR/.config/fish/config.fish"
-        portable_sed '/set -x PATH.*\/go\/bin/d' "$HOME_DIR/.config/fish/config.fish"
-        portable_sed '/# golang setup/d' "$HOME_DIR/.config/fish/config.fish"
-    fi
-    
+
     # Remove any remaining orphaned Go-related lines (comprehensive cleanup)
     for profile in $profiles; do
         if [ -f "$profile" ]; then
@@ -836,118 +926,117 @@ uninstall_go() {
             portable_sed '/.*\/usr\/local\/go\/bin/d' "$profile"
             portable_sed '/.*\$HOME\/go\/bin/d' "$profile"
             portable_sed '/.*\${HOME}\/go\/bin/d' "$profile"
-            
-            # Remove empty lines that might be left behind (optional)
-            # portable_sed '/^[[:space:]]*$/d' "$profile"
+
         fi
     done
-    
+
+    echo -e "${yellow}[-] env       :: $PROFILE_FILE  cleaned${reset}"
+
     # Remove GOPATH directory (ask user first)
     if [ -d "$HOME_DIR/go" ]; then
         echo ""
-        echo -e "${yellow}[?] Remove GOPATH directory ($HOME_DIR/go) and all Go packages?${reset}"
-        echo -e "${cyan}    This will delete all your Go projects and installed packages${reset}"
+        echo -e "${yellow}[?] GOPATH    :: remove $HOME_DIR/go and all Go packages?${reset}"
+        echo -e "${cyan}[*] warning   :: this will delete all Go projects and installed packages${reset}"
         printf "Remove GOPATH? (y/N): "
         read -r reply
         case "$reply" in
             [Yy]|[Yy][Ee][Ss])
                 if rm -rf "$HOME_DIR/go" 2>/dev/null; then
                     log_message "Removed GOPATH directory"
-                    echo -e "${green}[✓] Removed GOPATH directory${reset}"
+                    echo -e "${green}[-] GOPATH    :: $HOME_DIR/go  removed${reset}"
                 else
                     log_error "Failed to remove GOPATH directory"
-                    echo -e "${red}[✗] Failed to remove GOPATH directory${reset}"
+                    echo -e "${red}[✗] GOPATH    :: failed to remove $HOME_DIR/go${reset}"
                 fi
                 ;;
             *)
-                echo -e "${blue}[i] Keeping GOPATH directory${reset}"
+                echo -e "${cyan}[*] GOPATH    :: keeping $HOME_DIR/go${reset}"
                 ;;
         esac
     fi
-    
+
     echo ""
-    echo -e "${green}[✓] Go uninstallation completed!${reset}"
+    echo -e "${green}[✓] uninstall :: complete${reset}"
     if [ -f "$HOME_DIR/.letsgo_last_backup" ]; then
-        echo -e "${cyan}[i] Backup saved at: $(cat "$HOME_DIR/.letsgo_last_backup" 2>/dev/null)${reset}"
+        echo -e "${cyan}[*] backup    :: $(cat "$HOME_DIR/.letsgo_last_backup" 2>/dev/null)${reset}"
     fi
-    echo -e "${yellow}[!] Please restart your terminal or source your profile to update your environment${reset}"
-    
+    echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
+
     log_message "Go uninstallation completed successfully"
+    echo ""
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     safe_exit 0
 }
 
 
 # Enhanced Go installation verification
 verify_go_installation() {
-    local max_attempts=3
+    local max_attempts=2
     local attempt=1
-    
-    echo -e "${blue}[i] Verifying Go installation...${reset}"
+
+    echo -e "${cyan}[*] verify    :: checking Go installation${reset}"
     log_message "Starting Go installation verification"
-    
+
+    # Update PATH once before the retry loop — not on every attempt
+    local _go_bin="$INSTALL_DIR/go/bin"
+    local _gopath_bin="$HOME_DIR/go/bin"
+    if [ "$OS" = "android" ]; then
+        _go_bin="$PREFIX/lib/go/bin"
+    fi
+    case ":$PATH:" in
+        *":$_go_bin:"*) ;;
+        *) export PATH="$_go_bin:$PATH" ;;
+    esac
+    case ":$PATH:" in
+        *":$_gopath_bin:"*) ;;
+        *) export PATH="$_gopath_bin:$PATH" ;;
+    esac
+
     while [ $attempt -le $max_attempts ]; do
         log_message "Verification attempt $attempt of $max_attempts"
-        
-        # For fish shell, we can't source in bash, so skip sourcing
-        case "$PROFILE_FILE" in
-            *config.fish*)
-                # Skip sourcing for fish shell
-                ;;
-            *)
-                if [ -f "$PROFILE_FILE" ]; then
-                    # Source the profile to get updated PATH
-                    # Disable exit on error temporarily
-                    set +e
-                    . "$PROFILE_FILE" >/dev/null 2>&1 || true
-                    set -e
-                fi
-                ;;
-        esac
-        
+
         # Check if go command is available
         if command -v go >/dev/null 2>&1; then
             local go_version_output
+            local go_version_exit_code
             go_version_output=$(go version 2>&1)
-            local go_version_exit_code=$?
-            
+            go_version_exit_code=$?
+
             if [ $go_version_exit_code -eq 0 ]; then
-                echo -e "${green}[✓] Go verification successful!${reset}"
-                echo -e "${cyan}[i] $go_version_output${reset}"
+                echo -e "${green}[+] verify    :: $go_version_output${reset}"
                 log_message "Go verification successful: $go_version_output"
-                
+
                 # Additional verification - check GOROOT
                 local goroot_output
                 goroot_output=$(go env GOROOT 2>&1)
                 if [ $? -eq 0 ]; then
-                    echo -e "${cyan}[i] GOROOT: $goroot_output${reset}"
+                    echo -e "${cyan}[*] GOROOT    :: $goroot_output${reset}"
                     log_message "GOROOT verification: $goroot_output"
                 else
-                    echo -e "${yellow}[!] Warning: Could not verify GOROOT${reset}"
+                    echo -e "${yellow}[!] GOROOT    :: could not verify${reset}"
                 fi
-                
+
                 return 0
             else
                 log_message "Go version command failed: $go_version_output"
-                echo -e "${yellow}[!] Go version command failed (attempt $attempt): $go_version_output${reset}"
+                echo -e "${yellow}[!] verify    :: go command not found in PATH${reset}"
             fi
         else
             log_message "Go command not found in PATH (attempt $attempt)"
-            echo -e "${yellow}[!] Go command not found in PATH (attempt $attempt)${reset}"
+            echo -e "${yellow}[!] verify    :: go command not found in PATH${reset}"
         fi
-        
+
         if [ $attempt -lt $max_attempts ]; then
-            echo -e "${blue}[i] Waiting 2 seconds before retry...${reset}"
-            sleep 2
+            echo -e "${cyan}[*] verify    :: retrying...${reset}"
         fi
-        
+
         attempt=$((attempt + 1))
     done
-    
+
     # If we get here, verification failed
     log_error "Go installation verification failed after $max_attempts attempts"
-    echo -e "${red}[✗] Go installation verification failed after $max_attempts attempts${reset}"
-    echo -e "${yellow}[!] Go may be installed but not accessible in current session${reset}"
-    echo -e "${yellow}[!] Try: source $(basename "$PROFILE_FILE") && go version${reset}"
+    echo -e "${red}[✗] verify    :: installation check failed${reset}"
+    echo -e "${yellow}[!] hint      :: source \$(basename "$PROFILE_FILE") && go version${reset}"
     return 1
 }
 
@@ -955,7 +1044,7 @@ verify_go_installation() {
 success_exit() {
     local message="${1:-Installation complete! Run 'go version' to verify.}"
     local skip_verification="${2:-false}"
-    
+
     # Verify installation unless explicitly skipped
     if [ "$skip_verification" != "true" ]; then
         if verify_go_installation; then
@@ -964,50 +1053,52 @@ success_exit() {
             message="Installation completed but verification failed - please check manually"
         fi
     fi
-    
-    echo -e "${green}[✓] $message${reset}"
-    echo    ""
-    echo -e "${green}------------------------------------------------------------------------${reset}"
-    echo -e "${green}[i] Enjoyed this? Help others discover it by sharing on social media! 💖${reset}"
-    echo -e "${green}------------------------------------------------------------------------${reset}"
+
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    echo -e "${green}[✓] done      :: $message${reset}"
+    echo -e "${green}[*] share     :: Enjoyed this? Help others discover it by sharing!${reset}"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo    ""
     safe_exit 0
 }
 
 # Enhanced Android Go installation
 install_go_android() {
-    echo -e "${yellow}[!] Installing Go using Termux package manager (pkg)...${reset}"
+    echo -e "${cyan}// ── INSTALL (TERMUX) ─────────────────────────────────────────${reset}"
+    echo -e "${cyan}[*] platform  :: android/termux${reset}"
+    echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
     log_message "Starting Android Go installation"
-    
+
     # Enhanced detection of problematic installations
     local cleanup_needed=false
-    
+
     # Check for broken manual Go installation in $PREFIX/go
     if [ -d "$PREFIX/go" ]; then
-        echo -e "${yellow}[!] Found previous manual Go installation in $PREFIX/go${reset}"
+        echo -e "${yellow}[!] install   :: found previous manual Go installation in $PREFIX/go${reset}"
         cleanup_needed=true
     fi
-    
+
     # Check for broken symlinks
     if [ -L "$PREFIX/bin/go" ] && [ ! -e "$PREFIX/bin/go" ]; then
-        echo -e "${yellow}[!] Found broken Go symlink in $PREFIX/bin/go${reset}"
+        echo -e "${yellow}[!] symlink   :: broken Go symlink in $PREFIX/bin/go${reset}"
         cleanup_needed=true
     fi
-    
+
     # Check for problematic GOROOT in profile
-    if [ -f "$PROFILE_FILE" ] && grep -q "export GOROOT" "$PROFILE_FILE" 2>/dev/null; then
-        if ! grep -q "GOROOT.*\$PREFIX/lib/go" "$PROFILE_FILE" 2>/dev/null; then
-            echo -e "${yellow}[!] Found incorrect GOROOT configuration in $PROFILE_FILE${reset}"
+    if [ -f "$PROFILE_FILE" ] && grep -q "export GOROOT\|set -x GOROOT" "$PROFILE_FILE" 2>/dev/null; then
+        if ! deduplicate_path "GOROOT=\$PREFIX/lib/go" "$PROFILE_FILE" && \
+           ! deduplicate_path "GOROOT \$PREFIX/lib/go" "$PROFILE_FILE"; then
+            echo -e "${yellow}[!] profile   :: incorrect GOROOT in $PROFILE_FILE${reset}"
             cleanup_needed=true
         fi
     fi
-    
+
     # Clean up if issues were detected
     if [ "$cleanup_needed" = true ]; then
-        echo -e "${yellow}[!] Cleaning up previous broken installations...${reset}"
+        echo -e "${yellow}[!] cleanup   :: removing previous broken installations${reset}"
         rm -rf "$PREFIX/go" 2>/dev/null
         rm -f "$PREFIX/bin/go" "$PREFIX/bin/gofmt" 2>/dev/null
-        
+
         # Clean environment variables
         if [ -f "$PROFILE_FILE" ]; then
             portable_sed '/# golang setup/d' "$PROFILE_FILE"
@@ -1017,24 +1108,23 @@ install_go_android() {
             portable_sed '/set -x GOROOT/d' "$PROFILE_FILE"
             portable_sed '/set -x GOPATH/d' "$PROFILE_FILE"
         fi
-        echo -e "${green}[✓] Cleanup completed${reset}"
+        echo -e "${green}[-] cleanup   :: done${reset}"
     fi
-    
+
     # Install Go via pkg
-    echo -e "${blue}[i] Installing Go via pkg...${reset}"
+    echo -e "${cyan}[*] install   :: golang via pkg${reset}"
     log_message "Installing Go via Termux pkg"
     if pkg install golang -y >/dev/null 2>&1; then
-        echo -e "${green}[✓] Go successfully installed via pkg!${reset}"
+        echo -e "${green}[+] install   :: done${reset}"
         log_message "Successfully installed Go via pkg"
-        
+
         # Set up correct environment variables for Termux
-        echo -e "${blue}[i] Setting up Go environment variables for Termux...${reset}"
         log_message "Setting up Termux Go environment variables"
-        
+
         # Ensure profile file and its directory exist
         mkdir -p "$(dirname "$PROFILE_FILE")" 2>/dev/null || true
         touch "$PROFILE_FILE"
-        
+
         # Check if environment is already configured properly
         if ! deduplicate_path "GOROOT=\$PREFIX/lib/go" "$PROFILE_FILE"; then
             # Handle different shell configurations
@@ -1046,7 +1136,7 @@ install_go_android() {
                         echo "# golang setup for Termux (fish shell)"
                         echo "set -x GOROOT \$PREFIX/lib/go"
                         echo "set -x GOPATH \$HOME/go"
-                        echo "set -x PATH \$PATH \$GOROOT/bin \$GOPATH/bin"
+                        echo "fish_add_path \$GOROOT/bin \$GOPATH/bin"
                     } >> "$PROFILE_FILE"
                     ;;
                 *)
@@ -1060,29 +1150,27 @@ install_go_android() {
                     } >> "$PROFILE_FILE"
                     ;;
             esac
-            
-            echo -e "${green}[✓] Go environment variables configured for Termux${reset}"
+
+            echo -e "${green}[+] env       :: $PROFILE_FILE  patched${reset}"
             log_message "Environment variables added to $PROFILE_FILE"
         else
-            echo -e "${green}[✓] Go environment variables already configured${reset}"
+            echo -e "${green}[+] env       :: already configured${reset}"
             log_message "Environment variables already present in $PROFILE_FILE"
         fi
-        
+
         # Create GOPATH directory
         mkdir -p "$HOME/go/bin" 2>/dev/null || true
         log_message "Created GOPATH directory: $HOME/go/bin"
-        
-        echo -e "${green}[✓] Installation complete!${reset}"
-        echo -e "${yellow}[!] Please run 'source $(basename "$PROFILE_FILE")' or restart Termux to update your PATH.${reset}"
-        echo -e "${green}[✓] Then run 'go version' to verify installation.${reset}"
-        
+
+        echo -e "${yellow}[!] action    :: source \$(basename "$PROFILE_FILE")${reset}"
+
         # Success exit with cleanup and social message
         log_message "Android Go installation completed successfully"
         success_exit "Android Go installation completed successfully!"
     else
         log_error "Failed to install Go via pkg"
-        echo -e "${red}[✗] Failed to install Go via pkg.${reset}"
-        echo -e "${red}[✗] Please try manually: pkg install golang${reset}"
+        echo -e "${red}[✗] install   :: failed via pkg${reset}"
+        echo -e "${red}[✗] hint      :: try manually: pkg install golang${reset}"
         safe_exit 1
     fi
 }
@@ -1091,82 +1179,132 @@ install_go_android() {
 install_go_manual() {
     # Check if the requested version is available
     if ! check_version_availability "$GO_VERSION" "$ARCH"; then
-        echo -e "${red}[✗] Cannot proceed with unavailable version${reset}"
+        echo -e "${red}[✗] abort     :: cannot proceed with unavailable version${reset}"
         safe_exit 1
     fi
-    
-    echo -e "${green}[✓] Downloading and installing Go-lang version: $GO_VERSION for $ARCH${reset}"
+
+    echo -e "${cyan}// ── INSTALL ──────────────────────────────────────────────────${reset}"
+    echo -e "${cyan}[*] version   :: $GO_VERSION${reset}"
+    echo -e "${cyan}[*] platform  :: $OS $ARCH${reset}"
+    echo -e "${cyan}[*] target    :: $INSTALL_DIR/go${reset}"
     log_message "Starting manual installation for $OS with architecture $ARCH"
-    
+
     # Create backup before installation
     if command -v go >/dev/null 2>&1; then
         create_backup
     fi
-    
-    # Set download file for cleanup
-    DOWNLOAD_FILE="${GO_VERSION}.${ARCH}.tar.gz"
-    log_message "Download file: $DOWNLOAD_FILE"
-    
-    # Download Go
-    echo -e "${blue}[i] Downloading Go binary...${reset}"
-    if ! wget -q "https://go.dev/dl/$DOWNLOAD_FILE"; then
-        log_error "Failed to download Go version $GO_VERSION"
-        echo -e "${red}[✗] Failed to download Go-lang version: $GO_VERSION${reset}"
+
+    # Create temp directory for download
+    TEMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'letsgo')
+    if [ -z "$TEMP_DIR" ] || [ ! -d "$TEMP_DIR" ]; then
+        log_error "Failed to create temporary directory"
+        echo -e "${red}[✗] tmpdir    :: failed to create temporary directory${reset}"
         safe_exit 1
     fi
+    log_message "Using temp directory: $TEMP_DIR"
+
+    # Set download file path (absolute, in temp dir)
+    DOWNLOAD_FILE="$TEMP_DIR/${GO_VERSION}.${ARCH}.tar.gz"
+    log_message "Download file: $DOWNLOAD_FILE"
+
+    # Extract SHA256 checksum for this specific build from cached API response
+    if [ -n "$GO_API_RESPONSE" ] && command -v jq >/dev/null 2>&1; then
+        GO_CHECKSUM=$(echo "$GO_API_RESPONSE" | jq -r \
+            --arg fn "${GO_VERSION}.${ARCH}.tar.gz" \
+            '.[0].files[] | select(.filename == $fn) | .sha256' 2>/dev/null)
+        log_message "Expected checksum: $GO_CHECKSUM"
+    fi
+
+    # Download Go
+    echo -e "${cyan}[*] fetch     :: $GO_VERSION.$ARCH.tar.gz${reset}"
+    if ! wget -q "https://go.dev/dl/${GO_VERSION}.${ARCH}.tar.gz" -O "$DOWNLOAD_FILE"; then
+        log_error "Failed to download Go version $GO_VERSION"
+        echo -e "${red}[✗] fetch     :: failed${reset}"
+        safe_exit 1
+    fi
+    echo -e "${green}[+] fetch     :: done${reset}"
     log_message "Successfully downloaded Go binary"
-    
+
     # Verify download
     if [ ! -f "$DOWNLOAD_FILE" ] || [ ! -s "$DOWNLOAD_FILE" ]; then
         log_error "Downloaded file is missing or empty"
-        echo -e "${red}[✗] Downloaded file is corrupt or missing${reset}"
+        echo -e "${red}[✗] fetch     :: downloaded file is corrupt or missing${reset}"
         safe_exit 1
     fi
-    
+
+    # Verify SHA256 checksum of downloaded file
+    echo -e "${cyan}[*] sha256    :: verifying${reset}"
+    if [ -n "$GO_CHECKSUM" ]; then
+        local actual_checksum=""
+        if command -v sha256sum >/dev/null 2>&1; then
+            actual_checksum=$(sha256sum "$DOWNLOAD_FILE" 2>/dev/null | awk '{print $1}')
+        elif command -v shasum >/dev/null 2>&1; then
+            actual_checksum=$(shasum -a 256 "$DOWNLOAD_FILE" 2>/dev/null | awk '{print $1}')
+        else
+            echo -e "${yellow}[!] sha256    :: no SHA256 tool found -- skipping verification${reset}"
+        fi
+        if [ -n "$actual_checksum" ]; then
+            if [ "$actual_checksum" = "$GO_CHECKSUM" ]; then
+                echo -e "${green}[+] sha256    :: verified${reset}"
+                log_message "Checksum verified: $actual_checksum"
+            else
+                log_error "Checksum mismatch! Expected: $GO_CHECKSUM, Got: $actual_checksum"
+                echo -e "${red}[✗] sha256    :: mismatch${reset}"
+                echo -e "${red}               expected  $GO_CHECKSUM${reset}"
+                echo -e "${red}               got       $actual_checksum${reset}"
+                echo -e "${red}[✗] abort     :: verify your connection and retry${reset}"
+                safe_exit 1
+            fi
+        fi
+    else
+        echo -e "${yellow}[!] sha256    :: no checksum available -- skipping verification${reset}"
+        log_message "No checksum available - skipping verification"
+    fi
+
     # Remove existing Go installation if it exists
     local go_install_path="$INSTALL_DIR/go"
     if [ -d "$go_install_path" ]; then
-        echo -e "${yellow}[!] Removing existing Go installation${reset}"
+        echo -e "${yellow}[!] remove    :: existing Go installation${reset}"
         if sudo rm -rf "$go_install_path" 2>/dev/null; then
             log_message "Removed existing Go installation"
         else
             log_error "Failed to remove existing Go installation"
-            echo -e "${red}[✗] Failed to remove existing Go installation${reset}"
+            echo -e "${red}[✗] remove    :: failed to remove existing Go installation${reset}"
             safe_exit 1
         fi
     fi
-    
+
     # Extract Go
-    echo -e "${blue}[i] Extracting Go binary...${reset}"
+    echo -e "${cyan}[*] extract   :: $INSTALL_DIR${reset}"
     if ! sudo tar -C "$INSTALL_DIR" -xzf "$DOWNLOAD_FILE" >/dev/null 2>&1; then
         log_error "Failed to extract Go version $GO_VERSION"
-        echo -e "${red}[✗] Failed to extract Go-lang version: $GO_VERSION${reset}"
+        echo -e "${red}[✗] extract   :: failed${reset}"
         safe_exit 1
     fi
+    echo -e "${green}[+] extract   :: done${reset}"
     log_message "Successfully extracted Go binary"
-    
+
     # Ensure bin directory exists
     sudo mkdir -p "$BIN_DIR" 2>/dev/null || true
-    
+
     # Create symbolic links
     local symlink_path="$BIN_DIR/go"
     if sudo ln -sf "$go_install_path/bin/go" "$symlink_path" 2>/dev/null; then
-        echo -e "${green}[✓] Created symbolic link for Go in $symlink_path${reset}"
         log_message "Created Go symlink"
     else
-        echo -e "${yellow}[!] Failed to create symbolic link for Go in $symlink_path. Go is still installed in $go_install_path/bin/${reset}"
+        echo -e "${yellow}[!] symlink   :: failed for $symlink_path -- Go still in $go_install_path/bin/${reset}"
         log_message "Failed to create Go symlink, but installation continues"
     fi
-    
+
     # Also create symlink for gofmt
     if sudo ln -sf "$go_install_path/bin/gofmt" "$BIN_DIR/gofmt" 2>/dev/null; then
         log_message "Created gofmt symlink"
     else
-        echo -e "${yellow}[!] Failed to create symbolic link for gofmt${reset}"
+        echo -e "${yellow}[!] symlink   :: failed to create gofmt symlink${reset}"
         log_message "Failed to create gofmt symlink"
     fi
-    
-    echo -e "${green}[✓] Go-lang successfully installed.${reset}"
+
+    echo -e "${green}[+] symlink   :: $BIN_DIR/go  $BIN_DIR/gofmt${reset}"
 
     # Add Go to the PATH environment variable for the REAL user
     if ! deduplicate_path "# golang setup" "$PROFILE_FILE"; then
@@ -1176,7 +1314,7 @@ install_go_manual() {
         else
             touch "$PROFILE_FILE"
         fi
-        
+
         {
             echo ""
             echo "# golang setup"
@@ -1185,21 +1323,21 @@ install_go_manual() {
             echo "export GOBIN=\$HOME/go/bin"
             echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH"
         } >> "$PROFILE_FILE"
-        
+
         # Ensure the profile file is owned by the real user
         if [ -n "$SUDO_USER" ]; then
             local real_group
             real_group=$(id -gn "$REAL_USER" 2>/dev/null) || real_group="$REAL_USER"
             sudo chown "$REAL_USER:$real_group" "$PROFILE_FILE" 2>/dev/null || true
         fi
-        
-        echo -e "${green}[✓] Added Go to PATH in $(basename "$PROFILE_FILE") for user $REAL_USER${reset}"
+
+        echo -e "${green}[+] env       :: $PROFILE_FILE  patched${reset}"
         log_message "Added Go environment variables to $PROFILE_FILE"
     else
-        echo -e "${green}[✓] Go is already in the PATH in $(basename "$PROFILE_FILE")${reset}"
+        echo -e "${green}[+] env       :: $PROFILE_FILE  already configured${reset}"
         log_message "Go environment variables already present in $PROFILE_FILE"
     fi
-    
+
     # Create GOPATH directory for the real user
     local gopath_dir="$HOME_DIR/go/bin"
     if [ -n "$SUDO_USER" ]; then
@@ -1208,19 +1346,160 @@ install_go_manual() {
         mkdir -p "$gopath_dir" 2>/dev/null || true
     fi
     log_message "Created GOPATH directory: $gopath_dir"
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+}
+
+# Pre-flight setup: verify and install all required dependencies
+run_setup() {
+    print_banner
+    echo -e "${cyan}// ── SETUP ───────────────────────────────────────────────────${reset}"
+    echo -e "${cyan}[*] platform  :: $OS${reset}"
+    echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
+    echo ""
+
+    local issues=0
+    local installed=0
+
+    # ── 1. Sudo check ──────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── PRIVILEGE ───────────────────────────────────────────────${reset}"
+    if [ "$OS" = "android" ]; then
+        echo -e "${green}[+] sudo      :: no sudo required${reset}"
+    else
+        if sudo -v >/dev/null 2>&1; then
+            echo -e "${green}[+] sudo      :: granted${reset}"
+        else
+            echo -e "${red}[✗] sudo      :: not available${reset}"
+            echo -e "${yellow}[!] action    :: run as: sudo ./$(basename "$0")${reset}"
+            issues=$((issues + 1))
+        fi
+    fi
+    echo ""
+
+    # ── 2. Internet connectivity ───────────────────────────────────────────────
+    echo -e "${cyan}// ── CONNECTIVITY ────────────────────────────────────────────${reset}"
+    if curl -s --max-time 5 --head "https://go.dev" >/dev/null 2>&1; then
+        echo -e "${green}[+] net       :: go.dev reachable${reset}"
+    else
+        echo -e "${yellow}[!] net       :: go.dev unreachable${reset}"
+        issues=$((issues + 1))
+    fi
+    echo ""
+
+    # ── 3. Architecture ────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── ARCHITECTURE ────────────────────────────────────────────${reset}"
+    local machine_arch
+    machine_arch=$(uname -m)
+    case "$machine_arch" in
+        x86_64|amd64)
+            echo -e "${green}[+] arch      :: $machine_arch  supported${reset}"
+            ;;
+        aarch64|arm64)
+            echo -e "${green}[+] arch      :: $machine_arch  supported${reset}"
+            ;;
+        armv6l|armv7l)
+            echo -e "${green}[+] arch      :: $machine_arch  supported${reset}"
+            ;;
+        *)
+            echo -e "${red}[✗] arch      :: $machine_arch  may not be supported${reset}"
+            echo -e "${cyan}[*] hint      :: check https://go.dev/dl/ for supported platforms${reset}"
+            issues=$((issues + 1))
+            ;;
+    esac
+    echo ""
+
+    # ── 4. Disk space ─────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── DISK SPACE ──────────────────────────────────────────────${reset}"
+    local avail_kb
+    avail_kb=$(df -k "$HOME_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+    local required_kb=600000  # ~600 MB minimum for download + extraction
+    if [ -n "$avail_kb" ] && [ "$avail_kb" -gt 0 ] 2>/dev/null; then
+        local avail_mb=0
+        avail_mb=$(( avail_kb / 1024 ))
+        if [ "$avail_kb" -ge "$required_kb" ]; then
+            echo -e "${green}[+] disk      :: ${avail_mb}MB free${reset}"
+        else
+            echo -e "${red}[✗] disk      :: ${avail_mb}MB free -- at least 600MB required${reset}"
+            issues=$((issues + 1))
+        fi
+    else
+        echo -e "${yellow}[!] disk      :: could not determine available space${reset}"
+    fi
+    echo ""
+
+    # ── 5. Dependencies ────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── DEPENDENCIES ────────────────────────────────────────────${reset}"
+    local required_tools=""
+    if [ "$OS" != "android" ]; then
+        required_tools="curl wget jq"
+    else
+        required_tools="curl wget"
+        echo -e "${cyan}[*] note      :: jq not available on Termux -- version fetching will use curl fallback${reset}"
+    fi
+
+    for tool in $required_tools; do
+        if command -v "$tool" >/dev/null 2>&1; then
+            echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: found${reset}"
+            log_message "$tool is available"
+        elif [ "$OS" = "MacOS" ] && ! command -v brew >/dev/null 2>&1 && ! command -v port >/dev/null 2>&1; then
+            echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- install manually${reset}"
+            echo -e "${cyan}[*] hint      :: install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${reset}"
+            echo -e "${cyan}[*] hint      :: then run: brew install $tool${reset}"
+            issues=$((issues + 1))
+        elif [ "$OS" != "android" ] && ! sudo -v >/dev/null 2>&1; then
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- skipping (no sudo)${reset}"
+            issues=$((issues + 1))
+        else
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- installing${reset}"
+            log_message "Installing missing dependency: $tool"
+            if install_package "$tool"; then
+                if command -v "$tool" >/dev/null 2>&1; then
+                    echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installed${reset}"
+                    log_message "Successfully installed $tool"
+                    installed=$((installed + 1))
+                else
+                    echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
+                    log_error "Failed to install $tool"
+                    issues=$((issues + 1))
+                fi
+            else
+                echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
+                log_error "Failed to install $tool"
+                issues=$((issues + 1))
+            fi
+        fi
+    done
+    echo ""
+
+    # ── 6. Verdict ─────────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── SUMMARY ─────────────────────────────────────────────────${reset}"
+    if [ "$installed" -gt 0 ]; then
+        echo -e "${green}[+] installed :: $installed dependenc$([ "$installed" -eq 1 ] && echo 'y' || echo 'ies')${reset}"
+    fi
+
+    if [ "$issues" -eq 0 ]; then
+        echo -e "${green}[✓] ready     :: system is ready to install Go${reset}"
+        echo -e "${cyan}[*] action    :: sudo ./$(basename "$0")${reset}"
+    else
+        echo -e "${red}[✗] ready     :: $issues issue$([ "$issues" -eq 1 ] && echo '' || echo 's') found -- resolve above first${reset}"
+    fi
+    echo ""
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+
+    if [ "$issues" -eq 0 ]; then
+        safe_exit 0
+    else
+        safe_exit 1
+    fi
 }
 
 # Main execution starts here
 main() {
-    # Detect shell capabilities early
-    detect_shell_capabilities
-    
     # Parse command line arguments first
     parse_arguments "$@"
-    
+
     # Initialize core variables early
     initialize_variables
-    
+
     # Set default log file if none specified but verbose mode is on
     if [ "$VERBOSE" = true ] && [ -z "$LOG_FILE" ]; then
         local log_dir
@@ -1232,11 +1511,14 @@ main() {
             log_dir="$HOME_DIR"
         fi
         LOG_FILE="$log_dir/letsgo_install_$(date +%Y%m%d_%H%M%S).log"
-        echo -e "${cyan}[i] Logging to: $LOG_FILE${reset}"
+        echo -e "${cyan}[*] log       :: $LOG_FILE${reset}"
     fi
-    
+
     # Handle different modes
     case "$MODE" in
+        setup)
+            run_setup
+            ;;
         uninstall)
             uninstall_go
             ;;
@@ -1247,23 +1529,22 @@ main() {
             # Continue with installation
             ;;
         *)
-            echo -e "${red}[✗] Unknown mode: $MODE${reset}"
+            echo -e "${red}[✗] mode      :: unknown: $MODE${reset}"
             safe_exit 1
             ;;
     esac
-    
+
     # Check for sudo privileges (not needed for Android/Termux)
     check_sudo
-    
-    #print ascii art 
-    # put ascii art here
 
     # Print banner
     print_banner
-    
+
+    echo -e "${cyan}// ── INSTALL ─────────────────────────────────────────────────${reset}"
+
     # Show detected OS after banner with proper spacing
-    echo -e "${blue}[i] Detected OS: $OS${reset}"
-    
+    echo -e "${cyan}[*] platform  :: $OS${reset}"
+
     # Install the required tools with enhanced validation
     local required_tools=""
     if [ "$OS" != "android" ]; then
@@ -1271,101 +1552,103 @@ main() {
     else
         required_tools="curl wget"  # jq might not be needed for Android
     fi
-    
+
     for tool in $required_tools; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            echo -e "${yellow}[!] $tool is not installed. Attempting to install...${reset}"
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- installing${reset}"
             log_message "Installing missing tool: $tool"
             install_package "$tool"
             if ! command -v "$tool" >/dev/null 2>&1; then
                 log_error "Failed to install $tool"
-                echo -e "${red}[✗] Failed to install $tool. Please install it manually.${reset}"
+                echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
                 safe_exit 1
             else
                 log_message "Successfully installed $tool"
-                echo -e "${green}[✓] Successfully installed $tool${reset}"
+                echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installed${reset}"
             fi
         else
             log_message "Tool $tool is already installed"
             if [ "$VERBOSE" = true ]; then
-                echo -e "${green}[✓] $tool is available${reset}"
+                echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: found${reset}"
             fi
         fi
     done
-    
-    echo -e "${blue}[i] Installing for user: $REAL_USER${reset}"
-    echo -e "${blue}[i] User home directory: $HOME_DIR${reset}"
-    echo -e "${blue}[i] Install directory: $INSTALL_DIR${reset}"
+
+    echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
+    echo -e "${cyan}[*] target    :: $INSTALL_DIR/go${reset}"
     if [ "$VERBOSE" = true ]; then
-        echo -e "${cyan}[i] Profile file: $PROFILE_FILE${reset}"
+        echo -e "${cyan}[*] profile   :: $PROFILE_FILE${reset}"
     fi
-    
+
     # Check to see what's the latest version of GO (skip for Android since we use pkg)
     if [ "$OS" != "android" ]; then
         if [ -n "$SPECIFIC_VERSION" ]; then
             # Validate and use specific version
             GO_VERSION=$(validate_go_version "$SPECIFIC_VERSION")
-            echo -e "${blue}[i] Installing specific Go version: $GO_VERSION${reset}"
+            echo -e "${cyan}[*] version   :: specific: $GO_VERSION${reset}"
             log_message "User requested specific version: $GO_VERSION"
         else
             # Get latest version with better error handling
             log_message "Fetching latest Go version from golang.org"
             if command -v jq >/dev/null 2>&1; then
-                GO_VERSION=$(curl -s --max-time 30 https://go.dev/dl/?mode=json 2>/dev/null | jq -r '.[0].version' 2>/dev/null)
+                GO_API_RESPONSE=$(curl -s --max-time 30 "https://go.dev/dl/?mode=json" 2>/dev/null)
+                GO_VERSION=$(echo "$GO_API_RESPONSE" | jq -r '.[0].version' 2>/dev/null)
                 if [ -z "$GO_VERSION" ] || [ "$GO_VERSION" = "null" ]; then
                     log_error "Failed to fetch latest Go version"
-                    echo -e "${red}[✗] Failed to fetch latest Go version. Please check your internet connection.${reset}"
+                    echo -e "${red}[✗] version   :: failed to fetch latest -- check your internet connection${reset}"
                     safe_exit 1
                 fi
             else
                 # Fallback method without jq
                 log_message "jq not available, using fallback method"
-                GO_VERSION=$(curl -s --max-time 30 https://go.dev/VERSION 2>/dev/null | head -1)
+                GO_VERSION=$(curl -s --max-time 30 https://go.dev/VERSION 2>/dev/null | head -1 | tr -d '\r')
                 if [ -z "$GO_VERSION" ]; then
                     log_error "Failed to fetch latest Go version using fallback method"
-                    echo -e "${red}[✗] Failed to fetch latest Go version. Please install jq or check your internet connection.${reset}"
+                    echo -e "${red}[✗] version   :: failed to fetch latest -- install jq or check internet${reset}"
                     safe_exit 1
                 fi
             fi
-            echo -e "${blue}[i] Latest Go version available: $GO_VERSION${reset}"
+            echo -e "${green}[+] version   :: $GO_VERSION (stable)${reset}"
             log_message "Latest Go version: $GO_VERSION"
         fi
     else
         if [ -n "$SPECIFIC_VERSION" ]; then
-            echo -e "${yellow}[!] Warning: --version flag is not supported on Android/Termux${reset}"
-            echo -e "${cyan}[i] Termux uses package manager versions. Use 'pkg install golang' for available version${reset}"
+            echo -e "${yellow}[!] version   :: --version not supported on Android/Termux${reset}"
+            echo -e "${cyan}[*] hint      :: Termux uses package manager -- try: pkg install golang${reset}"
             log_message "Specific version requested on Android - not supported"
         fi
-        echo -e "${blue}[i] Using Termux package manager for Go installation${reset}"
+        echo -e "${cyan}[*] install   :: using Termux package manager${reset}"
         log_message "Skipping version check for Android - using pkg"
     fi
-    
+
     # Check if Go is already installed and up-to-date
     local current_version=""
     local go_installed=false
-    
+
+    echo -e "${cyan}[*] version   :: checking installed Go${reset}"
     if command -v go >/dev/null 2>&1; then
         go_installed=true
         current_version=$(go version 2>/dev/null | awk '{print $3}')
         log_message "Current Go version detected: $current_version"
     fi
-    
+
     # Handle Android/Termux separately from other systems
     if [ "$OS" = "android" ]; then
         if [ "$go_installed" = true ]; then
-            echo -e "${green}[✓] Go is installed via Termux package manager 🎉${reset}"
-            echo -e "${blue}[i] Termux version: $(go version 2>/dev/null)${reset}"
-            echo -e "${yellow}[!] To update Go on Termux, use: pkg upgrade golang${reset}"
-            
+            echo -e "${green}[+] go        :: installed via Termux package manager${reset}"
+            echo -e "${cyan}[*] version   :: $(go version 2>/dev/null)${reset}"
+            echo -e "${yellow}[!] update    :: use: pkg upgrade golang${reset}"
+
             # Verify and fix environment if needed
             local env_needs_fix=false
-            
+
             # Check for correct GOROOT pattern
             if [ -f "$PROFILE_FILE" ]; then
-                if ! grep -q "GOROOT.*\$PREFIX/lib/go" "$PROFILE_FILE" 2>/dev/null; then
+                if ! deduplicate_path "GOROOT=\$PREFIX/lib/go" "$PROFILE_FILE" && \
+                   ! deduplicate_path "GOROOT \$PREFIX/lib/go" "$PROFILE_FILE"; then
                     env_needs_fix=true
                 fi
-                
+
                 # Check for GOPATH
                 if ! grep -q "GOPATH.*\$HOME/go" "$PROFILE_FILE" 2>/dev/null; then
                     env_needs_fix=true
@@ -1373,15 +1656,15 @@ main() {
             else
                 env_needs_fix=true
             fi
-            
+
             if [ "$env_needs_fix" = true ]; then
-                echo -e "${yellow}[!] Go environment variables need configuration. Setting up...${reset}"
+                echo -e "${yellow}[!] env       :: needs configuration -- setting up${reset}"
                 log_message "Fixing Android Go environment configuration"
-                
+
                 # Ensure profile file exists
                 mkdir -p "$(dirname "$PROFILE_FILE")" 2>/dev/null || true
                 touch "$PROFILE_FILE"
-                
+
                 # Clean problematic entries
                 if [ -f "$PROFILE_FILE" ]; then
                     portable_sed '/export GOROOT/d' "$PROFILE_FILE"
@@ -1391,7 +1674,7 @@ main() {
                     portable_sed '/set -x GOPATH/d' "$PROFILE_FILE"
                     portable_sed '/# golang setup/d' "$PROFILE_FILE"
                 fi
-                
+
                 # Add correct environment variables
                 case "$PROFILE_FILE" in
                     *config.fish*)
@@ -1400,7 +1683,7 @@ main() {
                             echo "# golang setup for Termux (fish shell)"
                             echo "set -x GOROOT \$PREFIX/lib/go"
                             echo "set -x GOPATH \$HOME/go"
-                            echo "set -x PATH \$PATH \$GOROOT/bin \$GOPATH/bin"
+                            echo "fish_add_path \$GOROOT/bin \$GOPATH/bin"
                         } >> "$PROFILE_FILE"
                         ;;
                     *)
@@ -1413,19 +1696,19 @@ main() {
                         } >> "$PROFILE_FILE"
                         ;;
                 esac
-                
+
                 mkdir -p "$HOME/go/bin" 2>/dev/null || true
-                echo -e "${green}[✓] Go environment variables configured for Termux${reset}"
-                echo -e "${yellow}[!] Please run 'source $(basename "$PROFILE_FILE")' to update your environment${reset}"
+                echo -e "${green}[+] env       :: $PROFILE_FILE  patched${reset}"
+                echo -e "${yellow}[!] action    :: source \$(basename "$PROFILE_FILE")${reset}"
                 log_message "Fixed Android Go environment configuration"
             else
-                echo -e "${green}[✓] Go environment is properly configured${reset}"
+                echo -e "${green}[+] env       :: properly configured${reset}"
             fi
-            
+
             # Skip verification since Go is already installed and working
             success_exit "Go is already installed and properly configured!" "true"
         else
-            echo -e "${yellow}[yikes bro] Go is not installed. Installing via Termux package manager${reset}"
+            echo -e "${yellow}[!] go        :: not installed -- installing via Termux package manager${reset}"
             install_go_android
         fi
     else
@@ -1433,26 +1716,29 @@ main() {
         if [ "$go_installed" = true ]; then
             if [ "$current_version" = "$GO_VERSION" ]; then
                 # Skip verification since Go is already working
-                success_exit "Go version: $GO_VERSION is already installed 🎉" "true"
+                echo -e "${green}[+] version   :: $current_version already installed${reset}"
+                echo -e "${cyan}[*] hint      :: run: sudo ./$(basename "$0") --version X.X.X to change${reset}"
+                success_exit "Go version: $GO_VERSION is already installed" "true"
             else
                 if [ -n "$SPECIFIC_VERSION" ]; then
-                    echo -e "${yellow}[yikes bro] Current version: $current_version, installing requested version: $GO_VERSION${reset}"
+                    echo -e "${yellow}[!] update    :: $current_version -> $GO_VERSION${reset}"
                 else
-                    echo -e "${yellow}[yikes bro] Updating Go from version: $current_version to version: $GO_VERSION${reset}"
+                    echo -e "${yellow}[!] update    :: $current_version -> $GO_VERSION${reset}"
                 fi
             fi
         else
             if [ -n "$SPECIFIC_VERSION" ]; then
-                echo -e "${yellow}[yikes bro] Go is not installed. Installing requested version: $GO_VERSION${reset}"
+                echo -e "${yellow}[!] go        :: not installed -- installing requested: $GO_VERSION${reset}"
             else
-                echo -e "${yellow}[yikes bro] Go is not installed. Installing latest version: $GO_VERSION${reset}"
+                echo -e "${yellow}[!] go        :: not installed -- installing latest: $GO_VERSION${reset}"
             fi
         fi
-        
+
         # Set architecture and download URL for Linux/MacOS
         if [ "$OS" = "linux" ]; then
             # Detect Linux architecture (x86_64, aarch64, etc.)
-            local machine_arch=$(uname -m)
+            local machine_arch
+            machine_arch=$(uname -m)
             case $machine_arch in
                 x86_64)
                     ARCH="linux-amd64"
@@ -1467,11 +1753,11 @@ main() {
                     ARCH="linux-386"
                     ;;
                 *)
-                    echo -e "${red}[✗] Unsupported architecture: $machine_arch${reset}"
+                    echo -e "${red}[✗] arch      :: unsupported: $machine_arch${reset}"
                     safe_exit 1
                     ;;
             esac
-            
+
         elif [ "$OS" = "MacOS" ]; then
             # Detect Mac architecture (Intel vs Apple Silicon)
             case "$(uname -m)" in
@@ -1483,27 +1769,25 @@ main() {
                     ;;
             esac
         fi
-        
+
         log_message "Detected architecture: $ARCH"
-        
+
         # Proceed with manual installation
         install_go_manual
     fi
-    
+
     # Final instructions based on OS
     echo ""
     case "$OS" in
-        android)
-            echo -e "${yellow}[!] Please run 'source $(basename "$PROFILE_FILE")' or restart Termux to update your PATH.${reset}"
-            ;;
         linux)
-            echo -e "${yellow}[!] Please run 'source $(basename "$PROFILE_FILE")' or log out and back in to update your PATH.${reset}"
+            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
             ;;
         MacOS)
-            echo -e "${yellow}[!] Please run 'source $(basename "$PROFILE_FILE")' or restart your terminal to update your PATH.${reset}"
+            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
             ;;
     esac
-    
+
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     success_exit
 }
 
