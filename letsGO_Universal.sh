@@ -70,8 +70,8 @@ parse_arguments() {
                 MODE="uninstall"
                 shift
                 ;;
-            --diagnose)
-                MODE="diagnose"
+            --diagnostic)
+                MODE="diagnostic"
                 shift
                 ;;
             --setup)
@@ -130,7 +130,7 @@ show_help() {
     echo ""
     echo "  --setup           Check and install required dependencies, then exit"
     echo "  --uninstall       Completely remove Go installation and clean environment"
-    echo "  --diagnose        Check current Go setup health and show system info"
+    echo "  --diagnostic      Check current Go setup health and show system info"
     echo "  --version VERSION Install a specific version of Go (e.g., --version 1.21.0)"
     echo "  --verbose, -v     Enable verbose output"
     echo "  --log FILE        Log installation details to specified file"
@@ -141,7 +141,7 @@ show_help() {
     echo "  $0                        Install or update to latest Go version"
     echo "  $0 --version 1.20.5       Install Go version 1.20.5"
     echo "  $0 --uninstall            Remove Go completely"
-    echo "  $0 --diagnose             Check Go installation health"
+    echo "  $0 --diagnostic           Check Go installation health"
     echo "  $0 --verbose              Install with detailed output"
     echo ""
     echo -e "${yellow}[!] note      :: --version flag works only on Linux/MacOS, not Android/Termux${reset}"
@@ -600,7 +600,7 @@ collect_system_info() {
 
 # Enhanced diagnostic mode function using string operations
 run_diagnostics() {
-    echo -e "${cyan}// ── DIAGNOSE ────────────────────────────────────────────────${reset}"
+    echo -e "${cyan}// ── DIAGNOSTIC ──────────────────────────────────────────────${reset}"
     echo ""
 
     collect_system_info
@@ -840,18 +840,25 @@ uninstall_go() {
         echo ""
     fi
 
-    # Ensure sudo is available for system-level operations
+    # ── Privilege ──────────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── PRIVILEGE ───────────────────────────────────────────────${reset}"
     if [ "$OS" != "android" ]; then
         check_sudo
         echo -e "${green}[+] sudo      :: granted${reset}"
+    else
+        echo -e "${green}[+] sudo      :: no sudo required${reset}"
     fi
+    echo ""
 
-    # Create backup before uninstalling
+    # ── Backup ─────────────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── BACKUP ──────────────────────────────────────────────────${reset}"
     create_backup
+    echo ""
 
     log_message "Starting Go uninstallation"
 
-    # Remove Go installations
+    # ── Remove ─────────────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── REMOVE ──────────────────────────────────────────────────${reset}"
     if [ "$OS" = "android" ]; then
         # Termux uninstallation
         log_message "Removing Go via pkg"
@@ -864,12 +871,9 @@ uninstall_go() {
                 log_message "Failed to remove Go via pkg, performing manual cleanup"
             fi
         fi
-
-        # Manual cleanup for Termux
         rm -rf "$PREFIX/go" 2>/dev/null
         rm -f "$PREFIX/bin/go" "$PREFIX/bin/gofmt" 2>/dev/null
         log_message "Cleaned up Termux Go files"
-
     else
         # Linux/MacOS uninstallation
         local go_install_path="$INSTALL_DIR/go"
@@ -883,33 +887,37 @@ uninstall_go() {
             fi
         fi
 
-        # Remove symlinks
+        # Remove symlinks — only report what actually existed
+        local symlinks_removed=false
+        if [ -L "$BIN_DIR/go" ] || [ -L "$BIN_DIR/gofmt" ]; then
+            symlinks_removed=true
+        fi
         sudo rm -f "$BIN_DIR/go" "$BIN_DIR/gofmt" 2>/dev/null
-        echo -e "${yellow}[-] symlinks  :: $BIN_DIR/go  $BIN_DIR/gofmt  removed${reset}"
+        if [ "$symlinks_removed" = true ]; then
+            echo -e "${yellow}[-] symlinks  :: $BIN_DIR/go  $BIN_DIR/gofmt  removed${reset}"
+        else
+            echo -e "${cyan}[*] symlinks  :: none found in $BIN_DIR${reset}"
+        fi
         log_message "Removed Go symlinks from $BIN_DIR"
     fi
+    echo ""
 
-    # Enhanced environment cleanup using string list - FIXED to remove PATH lines
+    # ── Environment cleanup ────────────────────────────────────────────────────
+    echo -e "${cyan}// ── ENVIRONMENT ─────────────────────────────────────────────${reset}"
     log_message "Cleaning environment variables"
     local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile $HOME_DIR/.config/fish/config.fish"
 
     for profile in $profiles; do
         if [ -f "$profile" ]; then
             log_message "Cleaning Go config from $profile"
-
-            # Remove Go-related lines using portable sed
             portable_sed '/# golang setup/d' "$profile"
             portable_sed '/export GOROOT/d' "$profile"
             portable_sed '/export GOPATH/d' "$profile"
             portable_sed '/export GOBIN/d' "$profile"
-
-            # Remove PATH lines that reference Go variables
             portable_sed '/export PATH.*GOROOT/d' "$profile"
             portable_sed '/export PATH.*GOPATH/d' "$profile"
             portable_sed '/export PATH.*\/go\/bin/d' "$profile"
             portable_sed '/export PATH.*\/usr\/local\/go/d' "$profile"
-
-            # Fish shell cleanup
             portable_sed '/set -x GOROOT/d' "$profile"
             portable_sed '/set -x GOPATH/d' "$profile"
             portable_sed '/set -x PATH.*GOROOT/d' "$profile"
@@ -919,22 +927,20 @@ uninstall_go() {
         fi
     done
 
-    # Remove any remaining orphaned Go-related lines (comprehensive cleanup)
     for profile in $profiles; do
         if [ -f "$profile" ]; then
-            # Remove any lines containing common Go paths
             portable_sed '/.*\/usr\/local\/go\/bin/d' "$profile"
             portable_sed '/.*\$HOME\/go\/bin/d' "$profile"
             portable_sed '/.*\${HOME}\/go\/bin/d' "$profile"
-
         fi
     done
 
     echo -e "${yellow}[-] env       :: $PROFILE_FILE  cleaned${reset}"
+    echo ""
 
-    # Remove GOPATH directory (ask user first)
+    # ── GOPATH workspace ───────────────────────────────────────────────────────
     if [ -d "$HOME_DIR/go" ]; then
-        echo ""
+        echo -e "${cyan}// ── GOPATH ──────────────────────────────────────────────────${reset}"
         echo -e "${yellow}[?] GOPATH    :: remove $HOME_DIR/go and all Go packages?${reset}"
         echo -e "${cyan}[*] warning   :: this will delete all Go projects and installed packages${reset}"
         printf "Remove GOPATH? (y/N): "
@@ -943,7 +949,7 @@ uninstall_go() {
             [Yy]|[Yy][Ee][Ss])
                 if rm -rf "$HOME_DIR/go" 2>/dev/null; then
                     log_message "Removed GOPATH directory"
-                    echo -e "${green}[-] GOPATH    :: $HOME_DIR/go  removed${reset}"
+                    echo -e "${yellow}[-] GOPATH    :: $HOME_DIR/go  removed${reset}"
                 else
                     log_error "Failed to remove GOPATH directory"
                     echo -e "${red}[✗] GOPATH    :: failed to remove $HOME_DIR/go${reset}"
@@ -953,17 +959,19 @@ uninstall_go() {
                 echo -e "${cyan}[*] GOPATH    :: keeping $HOME_DIR/go${reset}"
                 ;;
         esac
+        echo ""
     fi
 
-    echo ""
+    # ── Summary ────────────────────────────────────────────────────────────────
+    echo -e "${cyan}// ── SUMMARY ─────────────────────────────────────────────────${reset}"
     echo -e "${green}[✓] uninstall :: complete${reset}"
     if [ -f "$HOME_DIR/.letsgo_last_backup" ]; then
         echo -e "${cyan}[*] backup    :: $(cat "$HOME_DIR/.letsgo_last_backup" 2>/dev/null)${reset}"
     fi
-    echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
+    echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+    echo ""
 
     log_message "Go uninstallation completed successfully"
-    echo ""
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     safe_exit 0
 }
@@ -971,7 +979,7 @@ uninstall_go() {
 
 # Enhanced Go installation verification
 verify_go_installation() {
-    local max_attempts=2
+    local max_attempts=1
     local attempt=1
 
     echo -e "${cyan}[*] verify    :: checking Go installation${reset}"
@@ -1036,7 +1044,7 @@ verify_go_installation() {
     # If we get here, verification failed
     log_error "Go installation verification failed after $max_attempts attempts"
     echo -e "${red}[✗] verify    :: installation check failed${reset}"
-    echo -e "${yellow}[!] hint      :: source \$(basename "$PROFILE_FILE") && go version${reset}"
+    echo -e "${yellow}[!] hint      :: source $(basename "$PROFILE_FILE") && go version${reset}"
     return 1
 }
 
@@ -1056,7 +1064,10 @@ success_exit() {
 
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo -e "${green}[✓] done      :: $message${reset}"
-    echo -e "${green}[*] share     :: Enjoyed this? Help others discover it by sharing!${reset}"
+    if [ -n "$PROFILE_FILE" ]; then
+        echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+    fi
+    echo -e "${cyan}[*] share     :: Enjoyed this? Help others discover it by sharing!${reset}"
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo    ""
     safe_exit 0
@@ -1162,7 +1173,7 @@ install_go_android() {
         mkdir -p "$HOME/go/bin" 2>/dev/null || true
         log_message "Created GOPATH directory: $HOME/go/bin"
 
-        echo -e "${yellow}[!] action    :: source \$(basename "$PROFILE_FILE")${reset}"
+        echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
 
         # Success exit with cleanup and social message
         log_message "Android Go installation completed successfully"
@@ -1183,16 +1194,21 @@ install_go_manual() {
         safe_exit 1
     fi
 
-    echo -e "${cyan}// ── INSTALL ──────────────────────────────────────────────────${reset}"
+    echo -e "${cyan}// ── TARGET ──────────────────────────────────────────────────${reset}"
     echo -e "${cyan}[*] version   :: $GO_VERSION${reset}"
     echo -e "${cyan}[*] platform  :: $OS $ARCH${reset}"
     echo -e "${cyan}[*] target    :: $INSTALL_DIR/go${reset}"
+    echo ""
     log_message "Starting manual installation for $OS with architecture $ARCH"
 
     # Create backup before installation
+    echo -e "${cyan}// ── BACKUP ──────────────────────────────────────────────────${reset}"
     if command -v go >/dev/null 2>&1; then
         create_backup
+    else
+        echo -e "${cyan}[*] backup    :: no existing installation -- skipping${reset}"
     fi
+    echo ""
 
     # Create temp directory for download
     TEMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'letsgo')
@@ -1216,6 +1232,7 @@ install_go_manual() {
     fi
 
     # Download Go
+    echo -e "${cyan}// ── DOWNLOAD ────────────────────────────────────────────────${reset}"
     echo -e "${cyan}[*] fetch     :: $GO_VERSION.$ARCH.tar.gz${reset}"
     if ! wget -q "https://go.dev/dl/${GO_VERSION}.${ARCH}.tar.gz" -O "$DOWNLOAD_FILE"; then
         log_error "Failed to download Go version $GO_VERSION"
@@ -1260,16 +1277,18 @@ install_go_manual() {
         echo -e "${yellow}[!] sha256    :: no checksum available -- skipping verification${reset}"
         log_message "No checksum available - skipping verification"
     fi
+    echo ""
 
     # Remove existing Go installation if it exists
+    echo -e "${cyan}// ── INSTALL ─────────────────────────────────────────────────${reset}"
     local go_install_path="$INSTALL_DIR/go"
     if [ -d "$go_install_path" ]; then
-        echo -e "${yellow}[!] remove    :: existing Go installation${reset}"
+        echo -e "${yellow}[!] remove    :: existing installation${reset}"
         if sudo rm -rf "$go_install_path" 2>/dev/null; then
             log_message "Removed existing Go installation"
         else
             log_error "Failed to remove existing Go installation"
-            echo -e "${red}[✗] remove    :: failed to remove existing Go installation${reset}"
+            echo -e "${red}[✗] remove    :: failed${reset}"
             safe_exit 1
         fi
     fi
@@ -1289,11 +1308,13 @@ install_go_manual() {
 
     # Create symbolic links
     local symlink_path="$BIN_DIR/go"
+    local symlink_ok=true
     if sudo ln -sf "$go_install_path/bin/go" "$symlink_path" 2>/dev/null; then
         log_message "Created Go symlink"
     else
-        echo -e "${yellow}[!] symlink   :: failed for $symlink_path -- Go still in $go_install_path/bin/${reset}"
+        echo -e "${yellow}[!] symlink   :: failed for $symlink_path -- Go still usable from $go_install_path/bin/${reset}"
         log_message "Failed to create Go symlink, but installation continues"
+        symlink_ok=false
     fi
 
     # Also create symlink for gofmt
@@ -1302,11 +1323,16 @@ install_go_manual() {
     else
         echo -e "${yellow}[!] symlink   :: failed to create gofmt symlink${reset}"
         log_message "Failed to create gofmt symlink"
+        symlink_ok=false
     fi
 
-    echo -e "${green}[+] symlink   :: $BIN_DIR/go  $BIN_DIR/gofmt${reset}"
+    if [ "$symlink_ok" = true ]; then
+        echo -e "${green}[+] symlink   :: $BIN_DIR/go  $BIN_DIR/gofmt${reset}"
+    fi
+    echo ""
 
     # Add Go to the PATH environment variable for the REAL user
+    echo -e "${cyan}// ── ENVIRONMENT ─────────────────────────────────────────────${reset}"
     if ! deduplicate_path "# golang setup" "$PROFILE_FILE"; then
         # Ensure the profile file exists and is owned by the real user
         if [ -n "$SUDO_USER" ]; then
@@ -1346,6 +1372,7 @@ install_go_manual() {
         mkdir -p "$gopath_dir" 2>/dev/null || true
     fi
     log_message "Created GOPATH directory: $gopath_dir"
+    echo ""
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
 }
 
@@ -1355,6 +1382,7 @@ run_setup() {
     echo -e "${cyan}// ── SETUP ───────────────────────────────────────────────────${reset}"
     echo -e "${cyan}[*] platform  :: $OS${reset}"
     echo -e "${cyan}[*] user      :: $REAL_USER${reset}"
+    echo -e "${cyan}[*] target    :: $INSTALL_DIR/go${reset}"
     echo ""
 
     local issues=0
@@ -1522,7 +1550,7 @@ main() {
         uninstall)
             uninstall_go
             ;;
-        diagnose)
+        diagnostic)
             run_diagnostics
             ;;
         install)
@@ -1699,7 +1727,7 @@ main() {
 
                 mkdir -p "$HOME/go/bin" 2>/dev/null || true
                 echo -e "${green}[+] env       :: $PROFILE_FILE  patched${reset}"
-                echo -e "${yellow}[!] action    :: source \$(basename "$PROFILE_FILE")${reset}"
+                echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
                 log_message "Fixed Android Go environment configuration"
             else
                 echo -e "${green}[+] env       :: properly configured${reset}"
@@ -1765,31 +1793,3 @@ main() {
                     ARCH="darwin-arm64"
                     ;;
                 *)
-                    ARCH="darwin-amd64"
-                    ;;
-            esac
-        fi
-
-        log_message "Detected architecture: $ARCH"
-
-        # Proceed with manual installation
-        install_go_manual
-    fi
-
-    # Final instructions based on OS
-    echo ""
-    case "$OS" in
-        linux)
-            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
-            ;;
-        MacOS)
-            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
-            ;;
-    esac
-
-    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
-    success_exit
-}
-
-# Call main function with all arguments
-main "$@"
