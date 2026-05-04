@@ -7,7 +7,7 @@
 ![Shell Support](https://img.shields.io/badge/shells-bash%20%7C%20zsh%20%7C%20fish-informational)
 ![Maintained](https://img.shields.io/badge/maintained-yes-green)
 
-A portable, single-file Bash script that installs, upgrades, uninstalls, and diagnoses Go (Golang) across Linux, macOS, and Android (Termux). Designed to work on a fresh machine with no prior Go knowledge required.
+A portable, single-file Bash script that installs, upgrades, uninstalls, and runs diagnostics on Go (Golang) across Linux, macOS, and Android (Termux). Designed to work on a fresh machine with no prior Go knowledge required.
 
 ---
 
@@ -39,7 +39,7 @@ On Termux (Android), omit `sudo`:
 | Option | Description |
 |--------|-------------|
 | `--setup` | Check system prerequisites and install any missing dependencies, then exit |
-| `--diagnose` | Check Go installation health, PATH, and latest version status |
+| `--diagnostic` | Check Go installation health, PATH, and latest version status |
 | `--version <ver>` | Install a specific Go version (e.g., `--version 1.21.0`) |
 | `--uninstall` | Completely remove Go and clean up all environment variables |
 | `--verbose`, `-v` | Enable detailed output |
@@ -66,7 +66,7 @@ Exits `0` if everything is ready with the exact command to run next. Exits `1` a
 
 ---
 
-### `--diagnose` — Health check
+### `--diagnostic` — Health check
 
 Non-destructive. Safe to run at any time. Reports:
 
@@ -172,7 +172,7 @@ sudo ./letsGO_Universal.sh
 
 **Multiple Go installations detected**
 
-Run `--diagnose` to identify all installations, then `--uninstall` to clean up before reinstalling.
+Run `--diagnostic` to identify all installations, then `--uninstall` to clean up before reinstalling.
 
 **Capturing output for debugging**
 
@@ -188,7 +188,7 @@ sudo ./letsGO_Universal.sh --verbose --log /tmp/letsgo.log
 - `--setup` mode — pre-flight checks with dependency installation
 - SHA256 checksum verification of every downloaded tarball
 - Downloads isolated to a temp directory instead of the current working directory
-- `--diagnose` now compares installed version against latest; skips when offline
+- `--diagnostic` now compares installed version against latest; skips when offline
 - Removed `eval` from package installation — direct quoted calls per package manager
 - Removed unsafe shell profile sourcing in elevated context
 - Alpine Linux / musl detection fixed
