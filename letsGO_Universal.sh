@@ -1194,6 +1194,7 @@ install_go_manual() {
         safe_exit 1
     fi
 
+    echo ""
     echo -e "${cyan}// ── TARGET ──────────────────────────────────────────────────${reset}"
     echo -e "${cyan}[*] version   :: $GO_VERSION${reset}"
     echo -e "${cyan}[*] platform  :: $OS $ARCH${reset}"
@@ -1613,7 +1614,7 @@ main() {
         if [ -n "$SPECIFIC_VERSION" ]; then
             # Validate and use specific version
             GO_VERSION=$(validate_go_version "$SPECIFIC_VERSION")
-            echo -e "${cyan}[*] version   :: specific: $GO_VERSION${reset}"
+            echo -e "${cyan}[*] requested :: $GO_VERSION${reset}"
             log_message "User requested specific version: $GO_VERSION"
         else
             # Get latest version with better error handling
@@ -1636,7 +1637,7 @@ main() {
                     safe_exit 1
                 fi
             fi
-            echo -e "${green}[+] version   :: $GO_VERSION (stable)${reset}"
+            echo -e "${green}[+] latest    :: $GO_VERSION (stable)${reset}"
             log_message "Latest Go version: $GO_VERSION"
         fi
     else
@@ -1653,7 +1654,7 @@ main() {
     local current_version=""
     local go_installed=false
 
-    echo -e "${cyan}[*] version   :: checking installed Go${reset}"
+    echo -e "${cyan}[*] installed :: checking current version${reset}"
     if command -v go >/dev/null 2>&1; then
         go_installed=true
         current_version=$(go version 2>/dev/null | awk '{print $3}')
@@ -1744,7 +1745,7 @@ main() {
         if [ "$go_installed" = true ]; then
             if [ "$current_version" = "$GO_VERSION" ]; then
                 # Skip verification since Go is already working
-                echo -e "${green}[+] version   :: $current_version already installed${reset}"
+                echo -e "${green}[+] installed :: $current_version  up to date${reset}"
                 echo -e "${cyan}[*] hint      :: run: sudo ./$(basename "$0") --version X.X.X to change${reset}"
                 success_exit "Go version: $GO_VERSION is already installed" "true"
             else
