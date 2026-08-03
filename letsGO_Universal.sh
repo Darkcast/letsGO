@@ -5,6 +5,8 @@
 # Version 0.14 codename: universal-shell-compatible
 # NOTE: Requires bash. Run as: bash letsGO_Universal.sh
 
+SCRIPT_VERSION="0.14"
+
 # ANSI Colors
 red='\033[1;31m'
 green='\033[0;32m'
@@ -32,6 +34,8 @@ CLEANUP_PERFORMED=false
 TEMP_DIR=""
 GO_CHECKSUM=""
 GO_API_RESPONSE=""
+LOG_HEADER_WRITTEN=false
+ORIGINAL_ARGS=""
 
 # Enhanced cleanup function - centralized and robust
 cleanup() {
@@ -151,6 +155,27 @@ show_help() {
 }
 
 # Enhanced logging functions
+# Writes a one-time session header to LOG_FILE so a pasted log excerpt is
+# still self-describing about the environment it came from
+write_log_header() {
+    if [ -z "$LOG_FILE" ] || [ "$LOG_HEADER_WRITTEN" = true ]; then
+        return 0
+    fi
+    LOG_HEADER_WRITTEN=true
+
+    {
+        echo "==============================================================="
+        echo "letsGO_Universal.sh v$SCRIPT_VERSION"
+        echo "started    : $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "invocation : $0 $ORIGINAL_ARGS"
+        echo "os/arch    : $OS ${OSTYPE:-unknown} $(uname -m 2>/dev/null)"
+        echo "kernel     : $(uname -r 2>/dev/null)"
+        echo "bash       : $BASH_VERSION"
+        echo "user       : $REAL_USER (running as $(id -un 2>/dev/null))"
+        echo "==============================================================="
+    } >> "$LOG_FILE" 2>/dev/null || true
+}
+
 log_message() {
     local message="$1"
     local timestamp
@@ -161,6 +186,7 @@ log_message() {
     fi
 
     if [ -n "$LOG_FILE" ]; then
+        write_log_header
         echo "[$timestamp] $message" >> "$LOG_FILE" 2>/dev/null || true
     fi
 }
@@ -172,6 +198,7 @@ log_error() {
     echo -e "${red}[✗] error     :: $message${reset}" >&2
 
     if [ -n "$LOG_FILE" ]; then
+        write_log_header
         echo "[$timestamp] ERROR: $message" >> "$LOG_FILE" 2>/dev/null || true
     fi
 }
@@ -276,7 +303,6 @@ detect_user_shell() {
 # Initialize core variables early
 initialize_variables() {
     OS=$(detect_os)
-    log_message "Detected operating system: $OS ($OSTYPE)"
 
     if [ "$OS" = "unsupported" ]; then
         log_error "Unsupported operating system: $OSTYPE"
@@ -316,6 +342,8 @@ initialize_variables() {
         INSTALL_DIR="/usr/local"
         BIN_DIR="/usr/local/bin"
     fi
+
+    log_message "Detected operating system: $OS ($OSTYPE)"
 
     # Detect profile file
     PROFILE_FILE=$(detect_user_shell "$REAL_USER")
@@ -1243,9 +1271,12 @@ install_go_manual() {
     # Download Go
     echo -e "${cyan}// ── DOWNLOAD ────────────────────────────────────────────────${reset}"
     echo -e "${cyan}[*] fetch     :: $GO_VERSION.$ARCH.tar.gz${reset}"
-    if ! wget -q "https://go.dev/dl/${GO_VERSION}.${ARCH}.tar.gz" -O "$DOWNLOAD_FILE"; then
-        log_error "Failed to download Go version $GO_VERSION"
-        echo -e "${red}[✗] fetch     :: failed${reset}"
+    local wget_log="$TEMP_DIR/wget.log"
+    if ! wget "https://go.dev/dl/${GO_VERSION}.${ARCH}.tar.gz" -O "$DOWNLOAD_FILE" >"$wget_log" 2>&1; then
+        local wget_reason
+        wget_reason=$(tr '\r' '\n' < "$wget_log" 2>/dev/null | sed '/^[[:space:]]*$/d' | tail -1)
+        log_error "Failed to download Go version $GO_VERSION -- ${wget_reason:-wget exited with an error}"
+        echo -e "${red}[✗] fetch     :: failed -- ${wget_reason:-see --log output for details}${reset}"
         safe_exit 1
     fi
     echo -e "${green}[+] fetch     :: done${reset}"
@@ -1304,9 +1335,12 @@ install_go_manual() {
 
     # Extract Go
     echo -e "${cyan}[*] extract   :: $INSTALL_DIR${reset}"
-    if ! sudo tar -C "$INSTALL_DIR" -xzf "$DOWNLOAD_FILE" >/dev/null 2>&1; then
-        log_error "Failed to extract Go version $GO_VERSION"
-        echo -e "${red}[✗] extract   :: failed${reset}"
+    local tar_log="$TEMP_DIR/tar.log"
+    if ! sudo tar -C "$INSTALL_DIR" -xzf "$DOWNLOAD_FILE" >"$tar_log" 2>&1; then
+        local tar_reason
+        tar_reason=$(tail -1 "$tar_log" 2>/dev/null)
+        log_error "Failed to extract Go version $GO_VERSION -- ${tar_reason:-tar exited with an error}"
+        echo -e "${red}[✗] extract   :: failed -- ${tar_reason:-see --log output for details}${reset}"
         safe_exit 1
     fi
     echo -e "${green}[+] extract   :: done${reset}"
@@ -1531,6 +1565,8 @@ run_setup() {
 
 # Main execution starts here
 main() {
+    ORIGINAL_ARGS="$*"
+
     # Parse command line arguments first
     parse_arguments "$@"
 
