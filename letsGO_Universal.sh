@@ -208,16 +208,24 @@ detect_user_shell() {
         echo "$(date '+%Y-%m-%d %H:%M:%S') Detecting shell for user: $target_user" >> "$LOG_FILE" 2>/dev/null || true
     fi
 
-    # Method 1: Check user's login shell from passwd
+    # Method 1: Check user's login shell from passwd (Linux) or dscl (macOS)
     if command -v getent >/dev/null 2>&1; then
         detected_shell=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f7)
         if [ "$VERBOSE" = true ]; then
             echo "[LOG] getent detected shell: $detected_shell" >&2
         fi
+    elif [ "$OS" = "MacOS" ]; then
+        detected_shell=$(dscl . -read "/Users/$target_user" UserShell 2>/dev/null | awk '{print $2}')
+        if [ "$VERBOSE" = true ]; then
+            echo "[LOG] dscl detected shell: $detected_shell" >&2
+        fi
     fi
 
-    # Method 2: Fallback to environment
-    if [ -z "$detected_shell" ]; then
+    # Method 2: Fallback to environment -- only trustworthy when not running
+    # under sudo, since sudo commonly resets SHELL to the invoking (root)
+    # user's shell rather than target_user's, causing the wrong profile file
+    # to be picked (e.g. root's /bin/sh instead of the real user's zsh)
+    if [ -z "$detected_shell" ] && [ -z "$SUDO_USER" ]; then
         detected_shell="$SHELL"
         if [ "$VERBOSE" = true ]; then
             echo "[LOG] Using environment SHELL: $detected_shell" >&2
