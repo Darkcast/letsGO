@@ -811,9 +811,9 @@ create_backup() {
         cp -r "$PREFIX/lib/go" "$backup_dir/termux_go" 2>/dev/null || true
     fi
 
-    # Backup profile files using string list
-    local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile $HOME_DIR/.config/fish/config.fish"
-    for profile in $profiles; do
+    # Backup profile files
+    local profiles=("$HOME_DIR/.bashrc" "$HOME_DIR/.bash_profile" "$HOME_DIR/.zshrc" "$HOME_DIR/.profile" "$HOME_DIR/.config/fish/config.fish")
+    for profile in "${profiles[@]}"; do
         if [ -f "$profile" ]; then
             log_message "Backing up $profile"
             cp "$profile" "$backup_dir/$(basename "$profile").backup" 2>/dev/null || true
@@ -905,9 +905,9 @@ uninstall_go() {
     # ── Environment cleanup ────────────────────────────────────────────────────
     echo -e "${cyan}// ── ENVIRONMENT ─────────────────────────────────────────────${reset}"
     log_message "Cleaning environment variables"
-    local profiles="$HOME_DIR/.bashrc $HOME_DIR/.bash_profile $HOME_DIR/.zshrc $HOME_DIR/.profile $HOME_DIR/.config/fish/config.fish"
+    local profiles=("$HOME_DIR/.bashrc" "$HOME_DIR/.bash_profile" "$HOME_DIR/.zshrc" "$HOME_DIR/.profile" "$HOME_DIR/.config/fish/config.fish")
 
-    for profile in $profiles; do
+    for profile in "${profiles[@]}"; do
         if [ -f "$profile" ]; then
             log_message "Cleaning Go config from $profile"
             portable_sed '/# golang setup/d' "$profile"
@@ -927,7 +927,7 @@ uninstall_go() {
         fi
     done
 
-    for profile in $profiles; do
+    for profile in "${profiles[@]}"; do
         if [ -f "$profile" ]; then
             portable_sed '/.*\/usr\/local\/go\/bin/d' "$profile"
             portable_sed '/.*\$HOME\/go\/bin/d' "$profile"
@@ -1344,7 +1344,7 @@ install_go_manual() {
         {
             echo ""
             echo "# golang setup"
-            echo "export GOROOT=$go_install_path"
+            echo "export GOROOT=\"$go_install_path\""
             echo "export GOPATH=\$HOME/go"
             echo "export GOBIN=\$HOME/go/bin"
             echo "export PATH=\$GOROOT/bin:\$GOPATH/bin:\$PATH"
@@ -1793,3 +1793,28 @@ main() {
                     ARCH="darwin-arm64"
                     ;;
                 *)
+                    ARCH="darwin-amd64"
+                    ;;
+            esac
+        fi
+
+        log_message "Detected architecture: $ARCH"
+
+        # Proceed with manual installation
+        install_go_manual
+    fi
+
+    # Final instructions based on OS
+    echo ""
+    case "$OS" in
+        linux|MacOS)
+            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
+            ;;
+    esac
+
+    echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
+    success_exit
+}
+
+# Call main function with all arguments
+main "$@"

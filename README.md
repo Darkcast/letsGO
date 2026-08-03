@@ -32,6 +32,28 @@ On Termux (Android), omit `sudo`:
 ./letsGO_Universal.sh
 ```
 
+### Run without cloning
+
+Pipe the script straight from GitHub — no clone, no local file left behind:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Darkcast/letsGO/main/letsGO_Universal.sh | sudo bash
+```
+
+To pass flags, use `-s --` so they reach the script instead of `bash`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Darkcast/letsGO/main/letsGO_Universal.sh | sudo bash -s -- --setup
+```
+
+On Termux (Android), omit `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Darkcast/letsGO/main/letsGO_Universal.sh | bash
+```
+
+> Piping straight to `bash` runs remote code with your privileges without a local copy to inspect first. Review the script before trusting it in anything beyond personal use — see [Usage Disclaimer](#usage-disclaimer).
+
 ---
 
 ## Options
