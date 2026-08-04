@@ -1004,7 +1004,7 @@ uninstall_go() {
     if [ -f "$HOME_DIR/.letsgo_last_backup" ]; then
         echo -e "${cyan}[*] backup    :: $(cat "$HOME_DIR/.letsgo_last_backup" 2>/dev/null)${reset}"
     fi
-    echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+    echo -e "${yellow}[!] action    :: run in terminal: source $(basename "$PROFILE_FILE")${reset}"
     echo ""
 
     log_message "Go uninstallation completed successfully"
@@ -1080,7 +1080,7 @@ verify_go_installation() {
     # If we get here, verification failed
     log_error "Go installation verification failed after $max_attempts attempts"
     echo -e "${red}[✗] verify    :: installation check failed${reset}"
-    echo -e "${yellow}[!] hint      :: source $(basename "$PROFILE_FILE") && go version${reset}"
+    echo -e "${yellow}[!] hint      :: run in terminal: source $(basename "$PROFILE_FILE") && go version${reset}"
     return 1
 }
 
@@ -1101,7 +1101,7 @@ success_exit() {
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
     echo -e "${green}[✓] done      :: $message${reset}"
     if [ -n "$PROFILE_FILE" ]; then
-        echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+        echo -e "${yellow}[!] action    :: run in terminal: source $(basename "$PROFILE_FILE")${reset}"
     fi
     echo -e "${cyan}[*] share     :: Enjoyed this? Help others discover it by sharing!${reset}"
     echo -e "${blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}"
@@ -1209,7 +1209,7 @@ install_go_android() {
         mkdir -p "$HOME/go/bin" 2>/dev/null || true
         log_message "Created GOPATH directory: $HOME/go/bin"
 
-        echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+        echo -e "${yellow}[!] action    :: run in terminal: source $(basename "$PROFILE_FILE")${reset}"
 
         # Success exit with cleanup and social message
         log_message "Android Go installation completed successfully"
@@ -1771,7 +1771,7 @@ main() {
 
                 mkdir -p "$HOME/go/bin" 2>/dev/null || true
                 echo -e "${green}[+] env       :: $PROFILE_FILE  patched${reset}"
-                echo -e "${yellow}[!] action    :: source $(basename "$PROFILE_FILE")${reset}"
+                echo -e "${yellow}[!] action    :: run in terminal: source $(basename "$PROFILE_FILE")${reset}"
                 log_message "Fixed Android Go environment configuration"
             else
                 echo -e "${green}[+] env       :: properly configured${reset}"
@@ -1852,7 +1852,7 @@ main() {
     echo ""
     case "$OS" in
         linux|MacOS)
-            echo -e "${yellow}[!] action    :: source \$(basename \"$PROFILE_FILE\")${reset}"
+            echo -e "${yellow}[!] action    :: run in terminal: source $(basename "$PROFILE_FILE")${reset}"
             ;;
     esac
 
