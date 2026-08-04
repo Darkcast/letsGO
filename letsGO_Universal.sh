@@ -1509,31 +1509,31 @@ run_setup() {
 
     for tool in $required_tools; do
         if command -v "$tool" >/dev/null 2>&1; then
-            echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: found${reset}"
+            echo -e "${green}[+] $tool$(printf '%*s' $((10 - ${#tool})) ''):: found${reset}"
             log_message "$tool is available"
         elif [ "$OS" = "MacOS" ] && ! command -v brew >/dev/null 2>&1 && ! command -v port >/dev/null 2>&1; then
-            echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- install manually${reset}"
+            echo -e "${red}[✗] $tool$(printf '%*s' $((10 - ${#tool})) ''):: not found -- install manually${reset}"
             echo -e "${cyan}[*] hint      :: install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${reset}"
             echo -e "${cyan}[*] hint      :: then run: brew install $tool${reset}"
             issues=$((issues + 1))
         elif [ "$OS" != "android" ] && ! sudo -v >/dev/null 2>&1; then
-            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- skipping (no sudo)${reset}"
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((10 - ${#tool})) ''):: not found -- skipping (no sudo)${reset}"
             issues=$((issues + 1))
         else
-            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- installing${reset}"
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((10 - ${#tool})) ''):: not found -- installing${reset}"
             log_message "Installing missing dependency: $tool"
             if install_package "$tool"; then
                 if command -v "$tool" >/dev/null 2>&1; then
-                    echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installed${reset}"
+                    echo -e "${green}[+] $tool$(printf '%*s' $((10 - ${#tool})) ''):: installed${reset}"
                     log_message "Successfully installed $tool"
                     installed=$((installed + 1))
                 else
-                    echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
+                    echo -e "${red}[✗] $tool$(printf '%*s' $((10 - ${#tool})) ''):: installation failed${reset}"
                     log_error "Failed to install $tool"
                     issues=$((issues + 1))
                 fi
             else
-                echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
+                echo -e "${red}[✗] $tool$(printf '%*s' $((10 - ${#tool})) ''):: installation failed${reset}"
                 log_error "Failed to install $tool"
                 issues=$((issues + 1))
             fi
@@ -1628,21 +1628,21 @@ main() {
 
     for tool in $required_tools; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            echo -e "${yellow}[!] $tool$(printf '%*s' $((9 - ${#tool})) ''):: not found -- installing${reset}"
+            echo -e "${yellow}[!] $tool$(printf '%*s' $((10 - ${#tool})) ''):: not found -- installing${reset}"
             log_message "Installing missing tool: $tool"
             install_package "$tool"
             if ! command -v "$tool" >/dev/null 2>&1; then
                 log_error "Failed to install $tool"
-                echo -e "${red}[✗] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installation failed${reset}"
+                echo -e "${red}[✗] $tool$(printf '%*s' $((10 - ${#tool})) ''):: installation failed${reset}"
                 safe_exit 1
             else
                 log_message "Successfully installed $tool"
-                echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: installed${reset}"
+                echo -e "${green}[+] $tool$(printf '%*s' $((10 - ${#tool})) ''):: installed${reset}"
             fi
         else
             log_message "Tool $tool is already installed"
             if [ "$VERBOSE" = true ]; then
-                echo -e "${green}[+] $tool$(printf '%*s' $((9 - ${#tool})) ''):: found${reset}"
+                echo -e "${green}[+] $tool$(printf '%*s' $((10 - ${#tool})) ''):: found${reset}"
             fi
         fi
     done
@@ -1681,7 +1681,7 @@ main() {
                     safe_exit 1
                 fi
             fi
-            echo -e "${green}[+] latest    :: $GO_VERSION (stable)${reset}"
+            echo -e "${green}[+] latest ver:: $GO_VERSION (stable)${reset}"
             log_message "Latest Go version: $GO_VERSION"
         fi
     else
@@ -1698,7 +1698,6 @@ main() {
     local current_version=""
     local go_installed=false
 
-    echo -e "${cyan}[*] installed :: checking current version${reset}"
     if command -v go >/dev/null 2>&1; then
         go_installed=true
         current_version=$(go version 2>/dev/null | awk '{print $3}')
